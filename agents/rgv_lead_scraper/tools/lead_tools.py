@@ -11,7 +11,7 @@ from lead_scraper.export.csv_export import CsvExporter
 from lead_scraper.export.jsonl import JsonlExporter
 from lead_scraper.pipeline import run_enrich, run_scrape, run_score
 from lead_scraper.scorers.simple import SimpleHeuristicScorer
-from lead_scraper.scrapers.serpapi_maps import SerpApiGoogleMapsScraper
+from lead_scraper.scrapers.maps_serpapi import SerpApiGoogleMapsScraper
 
 
 @function_tool
@@ -92,5 +92,8 @@ def run_stage(
 
 
 async def _scrape(settings):
-    scraper = SerpApiGoogleMapsScraper(settings.serpapi)
+    from pathlib import Path
+
+    trace_dir = Path(settings.export.out_dir) / "trace" / "maps_serpapi"
+    scraper = SerpApiGoogleMapsScraper(settings.serpapi, trace_dir=trace_dir)
     return await run_scrape(settings=settings, scraper=scraper)

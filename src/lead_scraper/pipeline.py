@@ -14,9 +14,21 @@ logger = logging.getLogger(__name__)
 
 
 def _dedupe(leads: list[Lead]) -> list[Lead]:
-    grouped: dict[tuple[str, str, str | None], Lead] = {}
+    grouped: dict[tuple[str, ...], Lead] = {}
     for lead in leads:
-        key = (lead.name.strip().lower(), lead.category.strip().lower(), (lead.phone or "").strip())
+        place_id = str(lead.flags.get("google_place_id") or "").strip()
+        maps_url = (lead.maps_url or "").strip()
+        if place_id:
+            key = ("place_id", place_id)
+        elif maps_url:
+            key = ("maps_url", maps_url)
+        else:
+            key = (
+                "fallback",
+                lead.name.strip().lower(),
+                lead.category.strip().lower(),
+                (lead.phone or "").strip(),
+            )
         existing = grouped.get(key)
         if existing is None:
             grouped[key] = lead

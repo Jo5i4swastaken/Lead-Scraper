@@ -12,7 +12,7 @@ from lead_scraper.export.jsonl import JsonlExporter
 from lead_scraper.logging_utils import configure_logging
 from lead_scraper.pipeline import run_enrich, run_scrape, run_score
 from lead_scraper.scorers.simple import SimpleHeuristicScorer
-from lead_scraper.scrapers.serpapi_maps import SerpApiGoogleMapsScraper
+from lead_scraper.scrapers.maps_serpapi import SerpApiGoogleMapsScraper
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,8 @@ if __name__ == "__main__":
 
 
 async def _stage_scrape(settings):
-    scraper = SerpApiGoogleMapsScraper(settings.serpapi)
+    trace_dir = Path(settings.export.out_dir) / "trace" / "maps_serpapi"
+    scraper = SerpApiGoogleMapsScraper(settings.serpapi, trace_dir=trace_dir)
     return await run_scrape(settings=settings, scraper=scraper)
 
 
