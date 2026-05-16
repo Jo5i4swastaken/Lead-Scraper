@@ -1,0 +1,19 @@
+name: RGV Lead Scraper
+model: ${MODEL_NAME:-gpt-5.2}
+welcome_text: "RGV lead scraping agent ready. What city/category should we target?"
+instructions_file: instructions.md
+context: build_context
+variables:
+  config_path: "${LEAD_SCRAPER_CONFIG_PATH:-../../config/config.json}"
+tools:
+  - run_pipeline
+  - run_stage
+  - get_settings_summary
+  - read_file
+  - list_directory
+use_safe_agent: true
+safe_agent_options:
+  safe_tool_names:
+    - get_settings_summary
+    - read_file
+    - list_directory

@@ -1,0 +1,31 @@
+{
+  "cities": ["McAllen", "Mission", "Edinburg", "Weslaco"],
+  "categories": [
+    "restaurants",
+    "salons",
+    "construction",
+    "roofing",
+    "HVAC",
+    "auto repair",
+    "clinics",
+    "dentists",
+    "realtors",
+    "landscaping",
+    "food trucks",
+    "car washes",
+    "insurance",
+    "retail",
+    "home services"
+  ],
+  "serpapi": {
+    "engine": "google_maps",
+    "rate_limit_per_sec": 1.0,
+    "concurrency": 4,
+    "timeout_sec": 30
+  },
+  "export": {
+    "out_dir": "out",
+    "jsonl_name": "leads.jsonl",
+    "csv_name": "leads.csv"
+  }
+}
