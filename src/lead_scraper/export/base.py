@@ -9,3 +9,4 @@ class BaseExporter(ABC):
     @abstractmethod
     def export(self, leads: list[Lead]) -> str:
         raise NotImplementedError
+

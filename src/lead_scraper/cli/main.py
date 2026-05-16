@@ -7,8 +7,7 @@ from pathlib import Path
 
 from lead_scraper.config.settings import load_settings
 from lead_scraper.enrichers.noop import NoopEnricher
-from lead_scraper.export.csv_export import CsvExporter
-from lead_scraper.export.jsonl import JsonlExporter
+from lead_scraper.export.runner import export_leads
 from lead_scraper.logging_utils import configure_logging
 from lead_scraper.pipeline import run_enrich, run_scrape, run_score
 from lead_scraper.scorers.lead_quality import LeadQualityScorer, LeadQualityScorerConfig
@@ -25,11 +24,11 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     run_cmd = sub.add_parser("run", help="Run end-to-end pipeline")
-    run_cmd.add_argument("--export-format", choices=["jsonl", "csv", "both"], default="both")
+    _add_export_args(run_cmd, allow_both=True)
 
     stage_cmd = sub.add_parser("stage", help="Run a single stage")
     stage_cmd.add_argument("name", choices=["scrape", "enrich", "score", "export"])
-    stage_cmd.add_argument("--export-format", choices=["jsonl", "csv"], default="jsonl")
+    _add_export_args(stage_cmd, allow_both=False)
 
     args = parser.parse_args()
     configure_logging(args.log_level)
@@ -40,7 +39,7 @@ def main() -> None:
         leads = asyncio.run(_stage_scrape(settings))
         leads = asyncio.run(_stage_enrich(leads))
         leads = _stage_score(settings, leads)
-        out = _stage_export(settings, leads, fmt=args.export_format)
+        out = _stage_export(settings, leads, args)
         logger.info("done: %s", out)
         return
 
@@ -61,7 +60,7 @@ def main() -> None:
             leads = asyncio.run(_stage_scrape(settings))
             leads = asyncio.run(_stage_enrich(leads))
             leads = _stage_score(settings, leads)
-            _stage_export(settings, leads, fmt=args.export_format)
+            _stage_export(settings, leads, args)
             return
 
 
@@ -84,14 +83,52 @@ def _stage_score(settings, leads):
     return run_score(scorer=LeadQualityScorer(config=config), leads=leads)
 
 
-def _stage_export(settings, leads, *, fmt: str):
-    out_dir = Path(settings.export.out_dir)
-    outputs: dict[str, str] = {}
+def _add_export_args(parser: argparse.ArgumentParser, *, allow_both: bool) -> None:
+    formats = ["jsonl", "csv", "sqlite"]
+    if allow_both:
+        formats.append("both")
 
-    if fmt in ("jsonl", "both"):
-        outputs["jsonl"] = JsonlExporter(str(out_dir / settings.export.jsonl_name)).export(leads)
-    if fmt in ("csv", "both"):
-        outputs["csv"] = CsvExporter(str(out_dir / settings.export.csv_name)).export(leads)
+    parser.add_argument(
+        "--format",
+        "--export-format",
+        dest="export_format",
+        choices=formats,
+        default="both" if allow_both else "jsonl",
+    )
+    parser.add_argument("--output", dest="export_output", default=None)
+    parser.add_argument("--only-qualified", action="store_true")
+    parser.add_argument("--min-score", type=float, default=None)
+    parser.add_argument(
+        "--incremental",
+        dest="export_incremental",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
+
+
+def _stage_export(settings, leads, args):
+    out_dir = Path(settings.export.out_dir)
+    fmt: str = args.export_format
+    out_path = args.export_output
+
+    if out_path is None:
+        if fmt == "csv":
+            out_path = str(out_dir / settings.export.csv_name)
+        elif fmt == "jsonl":
+            out_path = str(out_dir / settings.export.jsonl_name)
+        elif fmt == "sqlite":
+            out_path = str(out_dir / "leads.sqlite")
+        else:
+            out_path = str(out_dir)
+
+    outputs = export_leads(
+        leads,
+        fmt=fmt,
+        out_path=str(out_path),
+        incremental=bool(args.export_incremental),
+        only_qualified=bool(args.only_qualified),
+        min_score=args.min_score,
+    )
 
     logger.info("export complete: %s", outputs)
     return outputs
