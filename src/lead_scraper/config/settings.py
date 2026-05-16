@@ -27,6 +27,7 @@ class Settings:
     categories: list[str]
     serpapi: SerpApiSettings
     export: ExportSettings
+    scoring: dict[str, object]
 
 
 def load_settings(config_path: str | None = None) -> Settings:
@@ -36,6 +37,7 @@ def load_settings(config_path: str | None = None) -> Settings:
 
     serpapi_raw = raw.get("serpapi", {})
     export_raw = raw.get("export", {})
+    scoring_raw = raw.get("scoring", {})
 
     serpapi = SerpApiSettings(
         engine=str(serpapi_raw.get("engine", "google_maps")),
@@ -54,6 +56,7 @@ def load_settings(config_path: str | None = None) -> Settings:
         categories=list(raw.get("categories", [])),
         serpapi=serpapi,
         export=export,
+        scoring=dict(scoring_raw) if isinstance(scoring_raw, dict) else {},
     )
 
 

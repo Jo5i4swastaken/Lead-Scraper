@@ -17,6 +17,7 @@ class Lead:
     social_links: dict[str, str] = field(default_factory=dict)
     flags: dict[str, Any] = field(default_factory=dict)
     lead_score: float | None = None
+    qualified: bool | None = None
     evidence: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -33,5 +34,6 @@ def lead_to_dict(lead: Lead) -> dict[str, Any]:
         "social_links": dict(lead.social_links),
         "flags": dict(lead.flags),
         "lead_score": lead.lead_score,
+        "qualified": lead.qualified,
         "evidence": list(lead.evidence),
     }

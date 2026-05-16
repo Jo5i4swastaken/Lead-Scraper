@@ -47,6 +47,8 @@ lead-scraper stage export --format jsonl
 
 Outputs default to `out/leads.jsonl` and `out/leads.csv`.
 
+Scoring is configured via `config/config.json` under `scoring.lead_quality` (weights/thresholds) and outputs `lead_score`, `qualified`, plus per-factor `evidence` in JSONL.
+
 ## Run (OmniAgents)
 
 ```bash

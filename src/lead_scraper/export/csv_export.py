@@ -27,6 +27,7 @@ class CsvExporter:
                     "social_links",
                     "flags",
                     "lead_score",
+                    "qualified",
                 ],
             )
             writer.writeheader()
@@ -44,6 +45,7 @@ class CsvExporter:
                         "social_links": dict(lead.social_links),
                         "flags": dict(lead.flags),
                         "lead_score": lead.lead_score,
+                        "qualified": lead.qualified,
                     }
                 )
         return str(self._out_path)

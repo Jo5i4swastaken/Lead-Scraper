@@ -11,7 +11,7 @@ from lead_scraper.export.csv_export import CsvExporter
 from lead_scraper.export.jsonl import JsonlExporter
 from lead_scraper.logging_utils import configure_logging
 from lead_scraper.pipeline import run_enrich, run_scrape, run_score
-from lead_scraper.scorers.simple import SimpleHeuristicScorer
+from lead_scraper.scorers.lead_quality import LeadQualityScorer, LeadQualityScorerConfig
 from lead_scraper.scrapers.maps_serpapi import SerpApiGoogleMapsScraper
 
 logger = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ def main() -> None:
     if args.command == "run":
         leads = asyncio.run(_stage_scrape(settings))
         leads = asyncio.run(_stage_enrich(leads))
-        leads = _stage_score(leads)
+        leads = _stage_score(settings, leads)
         out = _stage_export(settings, leads, fmt=args.export_format)
         logger.info("done: %s", out)
         return
@@ -55,12 +55,12 @@ def main() -> None:
         if args.name == "score":
             leads = asyncio.run(_stage_scrape(settings))
             leads = asyncio.run(_stage_enrich(leads))
-            _stage_score(leads)
+            _stage_score(settings, leads)
             return
         if args.name == "export":
             leads = asyncio.run(_stage_scrape(settings))
             leads = asyncio.run(_stage_enrich(leads))
-            leads = _stage_score(leads)
+            leads = _stage_score(settings, leads)
             _stage_export(settings, leads, fmt=args.export_format)
             return
 
@@ -79,8 +79,9 @@ async def _stage_enrich(leads):
     return await run_enrich(enricher=NoopEnricher(), leads=leads)
 
 
-def _stage_score(leads):
-    return run_score(scorer=SimpleHeuristicScorer(), leads=leads)
+def _stage_score(settings, leads):
+    config = LeadQualityScorerConfig.from_settings_dict(settings.scoring.get("lead_quality"))
+    return run_score(scorer=LeadQualityScorer(config=config), leads=leads)
 
 
 def _stage_export(settings, leads, *, fmt: str):

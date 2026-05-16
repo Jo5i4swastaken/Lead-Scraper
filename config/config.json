@@ -27,5 +27,21 @@
     "out_dir": "out",
     "jsonl_name": "leads.jsonl",
     "csv_name": "leads.csv"
+  },
+  "scoring": {
+    "lead_quality": {
+      "low_reviews_threshold": 20,
+      "inactive_social_days_threshold": 90,
+      "min_social_links_for_presence": 1,
+      "qualified_threshold": 50,
+      "weights": {
+        "no_website_listed": 25,
+        "no_website_verified": 15,
+        "low_reviews": 15,
+        "incomplete_profile": 10,
+        "weak_presence": 20,
+        "inactive_social": 15
+      }
+    }
   }
 }
