@@ -1,0 +1,2 @@
+[console_scripts]
+lead-scraper = lead_scraper.cli.main:main

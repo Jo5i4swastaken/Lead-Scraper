@@ -1,3 +1,14 @@
+Metadata-Version: 2.4
+Name: lead-scraper
+Version: 0.1.0
+Summary: AI-powered RGV lead scraping agent scaffold (OmniAgents)
+Author: Lead-Scraper
+License: Proprietary
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: omniagents[all]>=0.6.31
+Requires-Dist: python-dotenv>=1.0.0
+
 # Lead Scraper (RGV) — OmniAgents Scaffold
 
 Core scaffold for an AI-powered lead scraping pipeline for the Rio Grande Valley (RGV). This repo is intentionally modular so later phases can plug in additional scrapers/enrichers/scorers/exporters.
@@ -57,23 +68,3 @@ omniagents run -c agent.yml --mode ink
 ```
 
 The agent exposes tools to run the pipeline and stages.
-
-
-
-------
-from __future__ import annotations
-
-from pathlib import Path
-
-from omniagents.core.context.decorator import context_factory
-from omniagents.core.skills import build_available_skills_block
-
-
-@context_factory
-def build_context(variables):
-    agent_dir = Path(__file__).parent
-    skill_roots = [agent_dir / "skills"]
-    return {
-        "available_skills_block": build_available_skills_block(skill_roots),
-        **(variables or {}),
-    }
