@@ -1,0 +1,25 @@
+INFO:     Started server process [48680]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:9495 (Press CTRL+C to quit)
+Loaded .env file from /Users/josias/.obra/worktrees/f86f9/Lead-Scraper/.env
+Starting OmniAgents RPC server on 127.0.0.1:9495 (config: agents/rgv_lead_scraper/agent.yml)
+INFO:     127.0.0.1:64927 - "GET / HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:64928 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64929 - "HEAD / HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:64958 - "WebSocket /ws" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:64959 - "WebSocket /ws" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:64964 - "WebSocket /ws" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:64965 - "WebSocket /ws" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [48680]
