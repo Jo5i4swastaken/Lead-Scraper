@@ -1,0 +1,30 @@
+=== Probe 1: connect & introspect ===
+get_agent_info → {"jsonrpc": "2.0", "id": "1fbf46fd", "result": {"name": "RGV Lead Scraper", "welcome_text": "RGV lead scraping agent ready. What city/category should we target?"}}
+list_sessions → 33 sessions (showing first 3)
+     {"id": "d95b54c5-d80c-4f6c-82be-26c99f1732d2", "archived": false, "created_at": "2026-05-19 04:30:38", "message_count": 6, "first_message": {"role": "user", "content": "Scrape leads for two RGV cities one after the other: first city=McAllen
+     {"id": "eead13ab-dc93-4e97-b39c-5f75e973cfa1", "archived": false, "created_at": "2026-05-19 04:28:38", "message_count": 3, "first_message": {"role": "user", "content": "Now use the run_pipeline tool to scrape leads for city=Edinburg categor
+     {"id": "e7cf3d67-32db-41ee-a493-5611b09e7fdf", "archived": false, "created_at": "2026-05-19 04:28:35", "message_count": 4, "first_message": {"role": "user", "content": "Use the run_pipeline tool to scrape leads for city=McAllen category=plu
+get_session_info(session_id=probe-nonexistent) → {"jsonrpc": "2.0", "id": "ff3c44db", "error": {"code": -32601, "message": "Method not found", "data": {"method": "get_session_info"}}}
+
+=== Probe 2: start run with explicit session_id ===
+using session_id=probe-c50a6a64
+  [run1] run_started keys=['run_id', 'session_id']
+  [run1] resp:s1 keys=[]
+  [run1] message_output: PONG
+  [run1] run_end end_reason=completed
+  run1 ended: completed
+
+=== Probe 3: list+history for that session via JSON-RPC ===
+list_sessions → 34 total; matched probe id: 1
+   probe session row: {"id": "probe-c50a6a64", "archived": false, "created_at": "2026-05-19 14:12:29", "message_count": 2, "first_message": {"role": "user", "content": "Reply with exactly the word PONG and nothing else. Do not call any tools.", "timestamp": "2026-05-19 14:12:29"}, "last_message": {"id": "msg_040e926b59c1e853006a0c6fcee9fc8195b28489c489c09dba", "content": [{"annotations": [], "text": "PONG", "type": "ou
+get_session_history(probe-c50a6a64) → 2 entries
+     {"role": "user", "content": "Reply with exactly the word PONG and nothing else. Do not call any tools."}
+     {"id": "msg_040e926b59c1e853006a0c6fcee9fc8195b28489c489c09dba", "content": [{"annotations": [], "text": "PONG", "type": "output_text", "logprobs": []}], "role": "assistant", "status": "completed", "type": "message", "phase": null}
+
+=== Probe 4: reconnect with same session_id; verify context preserved ===
+  [run2] run_started keys=['run_id', 'session_id']
+  [run2] resp:s2 keys=[]
+  [run2] message_output: "PONG"
+  [run2] run_end end_reason=completed
+  run2 ended: completed
+  context-preservation check — final message: "PONG"

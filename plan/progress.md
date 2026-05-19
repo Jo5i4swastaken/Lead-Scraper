@@ -340,3 +340,37 @@ Session log for the Lead-Scraper → CRM integration project.
 **Open questions:** none.
 
 **Errors encountered:** none.
+
+---
+
+## 2026-05-19 — Phase 1.4c: Session API surface documented (Javier, worktree f86f9, branch phase/1.4c-session-api)
+
+**Done:**
+- Started agent in `--mode server` on port 9495 (no collisions) and probed JSON-RPC over WS at `/ws`.
+- Wrote `plan/session-api-surface.md` (6 sections — invocation, persistence, methods table with verified return shapes, resume verification with transcript, recommended Phase 2.4b/2.8 wiring with TS sketch, caveats).
+- Evidence captured at `plan/p14c_evidence/probe_ws.py`, `plan/p14c_evidence/session_api_probe.log`, `plan/p14c_evidence/server.log`.
+- Flipped all 6 §1.4c checkboxes and updated the Phase tracking row.
+
+**Empirical findings (vs prior hypotheses):**
+- **Persistence is SQLite, NOT a per-session directory.** Original task_plan.md hypothesis `~/.omniagents/sessions/<id>/` was wrong. Real path: `~/.omniagents/sessions/<project_slug>/<agent_slug>/sessions.db`. For our agent it's `~/.omniagents/sessions/default/rgv_lead_scraper/sessions.db` (already 33 sessions from prior 1.4 / 1.4b runs).
+- **`list_sessions` IS available in text mode** — returns `{id, archived, created_at, message_count, first_message, last_message}`. Phase 2.8 sidebar can build directly against this; no need for a CRM-side index just to enumerate.
+- **`get_session_info` is voice-only** — returns `-32601 "Method not found"` in text mode. Fallback is the pair `list_sessions` + `get_session_history` (both verified). Plan-internal references to `get_session_info` in the 2.8 design are red herrings.
+- **Resume preserves context end-to-end.** A fresh WS connection with the same `session_id` recovered full prior-turn context server-side from SQLite history — no client-side replay required. Critical for 2.4b's drawer-persists-across-navigation requirement.
+- **`get_agent_info` returns `{name, welcome_text}` only** — no tool list, no method catalogue.
+
+**Implications for downstream:**
+- 2.4b can reconnect freely on tab focus / route change — the session_id is the only handle needed.
+- 2.8 sidebar wires straight to `list_sessions`; `agent_chat_sessions` Supabase table is still needed but only for (a) per-user scoping and (b) CRM-owned chat titles (OmniAgents has no title field).
+- **Port discrepancy worth flagging:** SKILL.md / task_plan.md use `9494`; the actual binary default is `8000`. We just need to be explicit in 2.4b launch scripts.
+- **Custom-tool import flag:** running the agent outside an editable install requires `PYTHONPATH=src`, otherwise `tools.lead_tools` fails to load `lead_scraper.*`. Session-API probes still work (methods live on `AgentService`), but Phase 2.4b launch instructions must include this.
+
+**SerpAPI budget impact:** 0 searches consumed — probes used the no-tool "PONG" prompt and `safe_tool_names`-covered methods.
+
+**Errors encountered:**
+- One `ERROR: Could not import module 'tools.lead_tools' ... No module named 'lead_scraper'` on server boot. Did NOT block probes (session methods live on `AgentService`, not the tool registry). Documented as a launch-script note for 2.4b.
+
+**Escalation check:** no boundaries hit — `--mode server` exists, resume preserves context.
+
+**Open questions:** none for 1.4c. Adjacent (deferred to 2.4b): whether to populate the OmniAgents `sessions.user_id` column or scope entirely client-side via `agent_chat_sessions`.
+
+**Branch state:** committed on `phase/1.4c-session-api`, merging to main as the final unblock for Phase 1 → Phase 2.
