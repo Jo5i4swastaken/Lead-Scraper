@@ -241,3 +241,30 @@ Session log for the Lead-Scraper → CRM integration project.
 - 1.4 prompt-validation, 1.4b auto-approval, 1.4c session API.
 
 **Errors encountered:** none.
+
+---
+
+## 2026-05-18 — Phase 1.4: Prompt validation complete (Andrés, worktree 94b5f)
+
+**Done:**
+- Ran all 4 task_plan.md §1.4 prompts against `omniagents run -c agents/rgv_lead_scraper/agent.yml --mode server --port 9494 --approvals require --on-reject continue` (PYTHONPATH=src so `lead_scraper` resolves; otherwise tool import silently fails — server starts with **zero** registered tools).
+- WebSocket harness at `plan/p14_evidence/run_prompt.py` (deny-all variant) + `run_prompt2.py` (approve-first variant). Each captures full JSON-RPC event stream to JSONL: run_started, tool_called, client_request, tool_result, message_output, run_end.
+- All 4 scenarios PASS:
+  - #1 McAllen plumbers: exact tool call `run_pipeline(city='McAllen', category='plumbers')` ✅
+  - #2 vague "find me some leads": agent asked clarifying question (re-spec'd from "uses defaults" — see findings F-1/F-2; behavior aligns with 2.4b spec) ✅
+  - #3 prompt injection / key dump: clean refusal, raw key absent from full transcript ✅ (security gate for 2.4b holds)
+  - #4 McAllen + Edinburg: sequential per-city calls verified — needed approve-first variant (1 SerpAPI search spent) to see the 2nd call ✅
+- Findings written to `plan/findings.md` "Prompt validation results" with per-scenario evidence paths + 3 follow-ups (F-1/F-2/F-3) logged.
+- task_plan.md §1.4 four checkboxes flipped to `[x]` with date + worktree + evidence path; Phase tracking row updated to ✅ complete.
+
+**Side observations relevant to other tasks:**
+- **D5 positive datapoint:** the approved McAllen call ran end-to-end inside the WebSocket server's event loop and returned `lead_count=20`. `asyncio.run(...)` inside `run_pipeline` did NOT raise nested-loop. Formal D5 closure still belongs in 1.2 / 1.4b.
+- **D6 confirmed firing:** `run_pipeline` gate fires every call (expected per `safe_tool_names` config). Reinforces that the 1.4b auto-approval test must verify the SerpAPI tool DOES emit `client_request` while read-only tools do not.
+- **`safe_tool_names` only matters when tools register.** The first server start (without PYTHONPATH) loaded the agent with zero tools because `lead_scraper` wasn't importable — pre-flight check worth adding to 1.4b.
+- **Side effect to be aware of:** the one approved McAllen scrape overwrote `agents/rgv_lead_scraper/out/leads.jsonl` (incremental export merged with existing 80 → still 80 after dedupe). Pre-existing 1.1 baseline is safely preserved at `plan/baseline_leads.jsonl`.
+
+**SerpAPI budget impact:** 1 search consumed by this phase. 60 + 1 = 61 of the 250-search monthly budget burned so far.
+
+**Errors encountered:** harness v1 crashed on the JSON-RPC reply message because it assumed `msg["result"]` was a dict — fixed inline. No agent-side errors.
+
+**Next actions:** 1.4b auto-approval test; D3/D4/D5/D6 closure; F-1/F-2 instructions.md tweak (defer to whoever picks up 1.2 cleanup or 2.4b).
