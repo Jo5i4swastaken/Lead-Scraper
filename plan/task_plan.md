@@ -87,9 +87,9 @@ Before starting Phase 2 implementation, all of:
 
 ---
 
-## Phase 2 — WorkLogicly-CRM Wiring (BLOCKED on Phase 1)
+## Phase 2 — WorkLogicly-CRM Wiring (UNBLOCKED)
 
-**Status:** `blocked`
+**Status:** `unblocked`
 **Stack:** React 19 + Vite + TS + Supabase (Postgres + Auth + Realtime + Deno Edge Functions). No Python runtime in Supabase. Details in [findings.md "CRM resolved"](findings.md).
 
 **Architecture decision (locked):** Port the SerpAPI call into a Deno edge function. Mirrors the existing [ai-proxy](../../WorkLogicly-CRM/supabase/functions/ai-proxy/index.ts) pattern. The Python `lead_scraper` repo stays as the spec / CLI / batch tool, **not** in the CRM hot path.
@@ -383,19 +383,19 @@ No `chat-with-agent` proxy needed (browser talks WS directly to the local agent)
 | Phase | Status | Acceptance gate |
 |-------|--------|-----------------|
 | 1.1 Baseline run | ✅ complete (2026-05-18) | pipeline returns leads; agent calls right tool |
-| 1.2 Known defects | not_started | D1+D2 fixed; D3–D6 fixed or deferred |
+| 1.2 Known defects | ✅ complete (2026-05-18)| D1+D2 fixed; D3–D6 fixed|
 | 1.3 Failure matrix | ✅ complete (2026-05-18) | every row has a test or doc'd waiver — 10/10 covered by `tests/test_failure_modes.py` (16 tests, all pass); status table in findings.md |
 | 1.4 Prompt validation | ✅ complete (2026-05-18) | all 4 scenarios pass (Andrés, worktree 94b5f) — see `plan/p14_evidence/` and findings.md "Prompt validation results" |
 | 1.4b Auto-approval test | ✅ complete (2026-05-18) | non-SerpAPI tools auto-approve (T1/T2/T3); SerpAPI tool gates with `ui.request_tool_approval` (T4); always_approve suppresses subsequent same-tool gates within a run (T5b) — see `plan/p14b_evidence/` and findings.md "Auto-approval validation results" |
 | 1.4c Session API surface | ✅ complete (2026-05-19) | `plan/session-api-surface.md` written (Javier, worktree f86f9, branch `phase/1.4c-session-api`); `--mode server` confirmed; `list_sessions` + `get_session_history` verified in text mode; `get_session_info` confirmed voice-only with `-32601`; resume across reconnect verified — evidence in `plan/p14c_evidence/` |
 | 1.5 Output contract | ✅ complete (2026-05-18) | 16-field contract frozen in `findings.md` "Output contract (frozen)"; pinned by `tests/test_output_contract.py` (13 tests pass, full suite 35/35); `lead_id` stability proved; Deno field map written |
-| 1.6 Phase 1 gate | blocked | all of 1.1–1.5 |
-| 2.1 Schema migration | blocked | leads extended; lead_candidates + audit tables created; types updated |
-| 2.2 Edge function | blocked | generate-leads deployed; admin gate + cache + budget + 2-stage write |
-| 2.3 Client service | blocked | `generateLeads/promote/dismiss/fetchBudget` wrappers |
-| 2.4a UI form | blocked | admin-gated button + form + budget badge + admin-only staging tab |
-| 2.4b UI chat | blocked | port logic from Copy Agent; build visuals fresh in CRM theme; tool-trace UX; only SerpAPI tool gated |
-| ~~2.4c Agent service~~ | removed | replaced by local-WebSocket pattern |
-| ~~2.4d Edge functions for chat~~ | removed | not needed — browser talks WS direct |
-| 2.5 Safety | blocked | admin gate (3 layers) + per-click cap + rate-limit + monthly budget + cache + flag |
-| 2.6 Verification | blocked | all 11 checks pass in local Supabase |
+| 1.6 Phase 1 gate | ✅ complete (2026-05-19) | all of 1.1–1.5 |
+| 2.1 Schema migration | unblocked | leads extended; lead_candidates + audit tables created; types updated |
+| 2.2 Edge function | unblocked | generate-leads deployed; admin gate + cache + budget + 2-stage write |
+| 2.3 Client service | unblocked | `generateLeads/promote/dismiss/fetchBudget` wrappers |
+| 2.4a UI form | unblocked | admin-gated button + form + budget badge + admin-only staging tab |
+| 2.4b UI chat | unblocked | port logic from Copy Agent; build visuals fresh in CRM theme; tool-trace UX; only SerpAPI tool gated |
+| ~~2.4c Agent service~~ | unblocked | replaced by local-WebSocket pattern |
+| ~~2.4d Edge functions for chat~~ | unblocked | not needed — browser talks WS direct |
+| 2.5 Safety | unblocked | admin gate (3 layers) + per-click cap + rate-limit + monthly budget + cache + flag |
+| 2.6 Verification | unblocked | all 11 checks pass in local Supabase |
