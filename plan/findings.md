@@ -34,13 +34,24 @@ Research log. Append discoveries here. Each entry: short title, file:line eviden
 - **Evidence:** [tools/lead_tools.py:100,106,112](../agents/rgv_lead_scraper/tools/lead_tools.py) — `run_stage("score")` calls `_scrape` then `run_enrich` then `run_score`.
 - **Implication:** Calling `stage=score` repeatedly burns SerpAPI credits. Not safe to expose as-is to a CRM caller.
 
-### D5: `asyncio.run` inside a function tool may conflict with host loop
-- **Evidence:** [tools/lead_tools.py:69,70,97,100](../agents/rgv_lead_scraper/tools/lead_tools.py).
-- **Implication:** If OmniAgents runs tools inside a running event loop, this raises. Needs runtime verification.
+### D5: `asyncio.run` inside a function tool may conflict with host loop — **fixed (2026-05-19, worktree e3588)**
+- **Original evidence:** [tools/lead_tools.py:69,70,97,100,103,106](../agents/rgv_lead_scraper/tools/lead_tools.py).
+- **Implication (confirmed):** OmniAgents `--mode server` runs uvicorn with its own asyncio loop. `asyncio.run()` inside a tool body raises `RuntimeError: asyncio.run() cannot be called from a running event loop`.
+- **Fix (async refactor pattern):** converted `run_pipeline` and `run_stage` to `async def`; replaced all 6× `asyncio.run(...)` calls with `await ...`. `function_tool` natively supports async — `omniagents/core/tools/discovery.py:_wrap_sync_function` checks `inspect.iscoroutinefunction(func)` and passes coroutines through unwrapped, while sync functions get wrapped in `asyncio.to_thread`. So:
+  - SerpAPI-consuming work tools (`run_pipeline`, `run_stage`) → `async def` → run on host loop without nesting.
+  - Pure read tools (`get_settings_summary`) → stay sync → auto-offloaded to thread pool by the wrapper.
+- **Standalone CLI safety:** [src/lead_scraper/cli/main.py](../src/lead_scraper/cli/main.py) does NOT import `agents/rgv_lead_scraper/tools/lead_tools.py`; it owns its own `asyncio.run(...)` calls and is decoupled from the agent path. Refactor cannot regress the CLI.
+- **Verification:** `omniagents run -c agents/rgv_lead_scraper/agent.yml --mode server --port 9495` reaches `Application startup complete.` with no tool-load error. Static check: `run_pipeline._original_func` and `run_stage._original_func` both register as coroutines.
 
-### D6: Safe-agent gate fires on the only useful tools
-- **Evidence:** [agent.yml](../agents/rgv_lead_scraper/agent.yml) lists only read-only tools in `safe_tool_names`. `run_pipeline` and `run_stage` are gated → require user approval at runtime.
-- **Implication:** A CRM backend cannot trigger the agent autonomously without bypassing this gate. Reinforces the case for Option A (direct Python invocation, no agent layer in the hot path).
+### D6: Safe-agent gate fires on the only useful tools — **verified correct (2026-05-19, worktree e3588)**
+- **Original framing:** `safe_tool_names` excludes work tools, requiring manual approval.
+- **Round-5 policy reframe:** This is now the intended design. Only SerpAPI-consuming tools should gate via `client_request` (per-call user approval, ~250/month budget protection). Read-only tools auto-approve silently.
+- **Current `agent.yml` state matches policy exactly:**
+  - Gated (NOT in `safe_tool_names`): `run_pipeline`, `run_stage` ← SerpAPI-consuming, correctly gated.
+  - Auto-approved (in `safe_tool_names`): `get_settings_summary`, `read_file`, `list_directory` ← read-only, correctly auto-approved.
+- **Verification:** Read `omniagents/core/agents/safe.py:250-275` — `is_tool_safe(tool)` returns True iff `tool.name in self._safe_tool_names`. Set membership matches policy.
+- **No code change required.**
+- **Handoff to Phase 2.4b:** when `run_pipeline` is renamed to `request_lead_generation`, it must STAY OUT of `safe_tool_names`.
 
 ## Output contract (frozen)
 

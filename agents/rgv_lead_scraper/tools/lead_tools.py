@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import replace
 from typing import Any, Literal
 
@@ -53,7 +52,7 @@ def get_settings_summary(
 
 
 @function_tool
-def run_pipeline(
+async def run_pipeline(
     city: str | None = None,
     category: str | None = None,
     export_format: Literal["jsonl", "csv", "both"] = "both",
@@ -66,8 +65,8 @@ def run_pipeline(
     the config file for batch runs.
     """
     settings = _resolved_settings(config_path, city, category)
-    leads = asyncio.run(_scrape(settings))
-    leads = asyncio.run(run_enrich(enricher=NoopEnricher(), leads=leads))
+    leads = await _scrape(settings)
+    leads = await run_enrich(enricher=NoopEnricher(), leads=leads)
     leads = run_score(scorer=SimpleHeuristicScorer(), leads=leads)
 
     outputs: dict[str, str] = {}
@@ -80,7 +79,7 @@ def run_pipeline(
 
 
 @function_tool
-def run_stage(
+async def run_stage(
     stage: Literal["scrape", "enrich", "score", "export"],
     city: str | None = None,
     category: str | None = None,
@@ -94,16 +93,16 @@ def run_stage(
     settings = _resolved_settings(config_path, city, category)
 
     if stage == "scrape":
-        leads = asyncio.run(_scrape(settings))
+        leads = await _scrape(settings)
         return {"stage": "scrape", "lead_count": len(leads)}
 
-    leads = asyncio.run(_scrape(settings))
+    leads = await _scrape(settings)
 
     if stage == "enrich":
-        leads = asyncio.run(run_enrich(enricher=NoopEnricher(), leads=leads))
+        leads = await run_enrich(enricher=NoopEnricher(), leads=leads)
         return {"stage": "enrich", "lead_count": len(leads)}
 
-    leads = asyncio.run(run_enrich(enricher=NoopEnricher(), leads=leads))
+    leads = await run_enrich(enricher=NoopEnricher(), leads=leads)
 
     if stage == "score":
         leads = run_score(scorer=SimpleHeuristicScorer(), leads=leads)
