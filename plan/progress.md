@@ -268,3 +268,32 @@ Session log for the Lead-Scraper → CRM integration project.
 **Errors encountered:** harness v1 crashed on the JSON-RPC reply message because it assumed `msg["result"]` was a dict — fixed inline. No agent-side errors.
 
 **Next actions:** 1.4b auto-approval test; D3/D4/D5/D6 closure; F-1/F-2 instructions.md tweak (defer to whoever picks up 1.2 cleanup or 2.4b).
+
+---
+
+## 2026-05-18 — Phase 1.4b: Auto-approval verification complete (Esteban, this worktree)
+
+**Done:**
+- Wrote two harnesses: `plan/p14b_evidence/run_tests.py` (T1–T4, plus a misframed T5) and `plan/p14b_evidence/run_test_alwaysapprove.py` (corrected T5b within a single run).
+- Started `PYTHONPATH=src omniagents run -c agents/rgv_lead_scraper/agent.yml --mode server --port 9494 --approvals require --on-reject continue`, ran all five scenarios, captured JSON-RPC event streams.
+- All four task_plan.md §1.4b checkboxes verified PASS; Phase tracking row flipped to ✅.
+- Appended "Auto-approval validation results" section to findings.md (per-row table, final `safe_tool_names` set, D6 closure, three explicit risks for 2.4b implementers).
+
+**Headline results:**
+- **T1 get_settings_summary, T2 read_file, T3 list_directory:** no `ui.request_tool_approval` events. Auto-approve transparent. ✅
+- **T4 run_pipeline:** gate fires correctly with `function: "ui.request_tool_approval"`. ✅
+- **T5b single-run always_approve:** 2 run_pipeline calls (McAllen + Edinburg) within ONE start_run → 1 approval request, both calls executed (20 + 16 leads). ✅
+- **T5 cross-run always_approve:** does NOT persist across separate `start_run` calls. Per Copy Agent's `agent-rpc.ts:109`, `always_approve` is run-scoped, not session-scoped. CRM client must locally remember per-tool approve-always intent and re-send `always_approve: true` on each new run. Documented in findings.md "Risks" section.
+
+**Critical protocol finding for 2.4b:**
+- The OmniAgents WebSocket emits `client_request` JSON-RPC notifications for BOTH approval gates and UI status updates. Discriminator is `params.function`: `"ui.request_tool_approval"` (gate) vs `"ui.set_status"` (spinner toggle, e.g. "Reading file..." → cleared). The CRM `ToolApprovalCard` MUST filter on `function == "ui.request_tool_approval"`; routing every `client_request` to the approval UI will cause spurious popups during read_file / list_directory / etc.
+
+**D6 closure:** the current `agent.yml` (`safe_tool_names: [get_settings_summary, read_file, list_directory]`, work tools excluded) already encodes the round-5 policy correctly. D6 was originally framed as a defect; round-5 clarified that this is the desired behavior. Closed without a code change. No follow-on action needed until Phase 2.4b replaces `run_pipeline` with `request_lead_generation` — at that point the new tool should also stay OUT of `safe_tool_names`, and the read-only set remains in.
+
+**SerpAPI budget impact:** 2 searches consumed (T5b McAllen + Edinburg). Running total ≈ 63 of 250 monthly.
+
+**Side effect to flag:** T5b's two scrapes overwrote `agents/rgv_lead_scraper/out/leads.jsonl` (incremental export merged; still 80 lines after dedupe). Pre-existing 1.1 baseline at `plan/baseline_leads.jsonl` (sha1 b265df19f187fa73bad619b302538199433cea97) untouched.
+
+**Errors encountered:** initial summary collector in `run_tests.py` misread the OmniAgents event shape (`params.name` vs `params.tool`, no discriminator on `function`). Caught it on re-inspection; the raw JSONL transcripts are correct. Re-derived results from the raw events.
+
+**Out of scope (untouched):** D3 pagination, D4 stage independence, D5 nested asyncio (positive datapoint from P1.4 still stands — T5b also ran nested `asyncio.run` end-to-end twice with no crash, adds confirmation). 1.4c session-API surface remains open.

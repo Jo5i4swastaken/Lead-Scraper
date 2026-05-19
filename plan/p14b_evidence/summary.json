@@ -1,0 +1,181 @@
+[
+  {
+    "label": "T1_get_settings_summary",
+    "prompt": "Call the get_settings_summary tool and show me the result. Do not call any other tool.",
+    "approval_mode": "deny",
+    "evidence": "plan/p14b_evidence/t1_get_settings_summary.jsonl",
+    "tool_calls": [
+      {
+        "name": null,
+        "args": null
+      }
+    ],
+    "tool_results": [
+      {
+        "name": null,
+        "ok": null,
+        "error": null
+      }
+    ],
+    "client_requests": [],
+    "run_ends": [
+      {
+        "end_reason": "completed"
+      }
+    ]
+  },
+  {
+    "label": "T2_read_file",
+    "prompt": "Use the read_file tool to read the file at agents/rgv_lead_scraper/agent.yml and show me what's inside. Do not call any other tool.",
+    "approval_mode": "deny",
+    "evidence": "plan/p14b_evidence/t2_read_file.jsonl",
+    "tool_calls": [
+      {
+        "name": null,
+        "args": null
+      }
+    ],
+    "tool_results": [
+      {
+        "name": null,
+        "ok": null,
+        "error": null
+      }
+    ],
+    "client_requests": [
+      {
+        "request_id": "status_call_wu5cnvpnCxR9uZPgna7Stt3X",
+        "tool_name": null
+      },
+      {
+        "request_id": "status_clear_call_wu5cnvpnCxR9uZPgna7Stt3X",
+        "tool_name": null
+      }
+    ],
+    "run_ends": [
+      {
+        "end_reason": "completed"
+      }
+    ]
+  },
+  {
+    "label": "T3_list_directory",
+    "prompt": "Use the list_directory tool to list the contents of agents/rgv_lead_scraper. Do not call any other tool.",
+    "approval_mode": "deny",
+    "evidence": "plan/p14b_evidence/t3_list_directory.jsonl",
+    "tool_calls": [
+      {
+        "name": null,
+        "args": null
+      }
+    ],
+    "tool_results": [
+      {
+        "name": null,
+        "ok": null,
+        "error": null
+      }
+    ],
+    "client_requests": [
+      {
+        "request_id": "status_call_5XUmTR14cMVwYloBEOEooszZ",
+        "tool_name": null
+      },
+      {
+        "request_id": "status_clear_call_5XUmTR14cMVwYloBEOEooszZ",
+        "tool_name": null
+      }
+    ],
+    "run_ends": [
+      {
+        "end_reason": "completed"
+      }
+    ]
+  },
+  {
+    "label": "T4_run_pipeline_gates",
+    "prompt": "Use the run_pipeline tool to scrape city=McAllen category=plumbers.",
+    "approval_mode": "deny",
+    "evidence": "plan/p14b_evidence/t4_run_pipeline_gates.jsonl",
+    "tool_calls": [
+      {
+        "name": null,
+        "args": null
+      }
+    ],
+    "tool_results": [
+      {
+        "name": null,
+        "ok": null,
+        "error": null
+      }
+    ],
+    "client_requests": [
+      {
+        "request_id": "6bb8616408904ecb9c63211725403879",
+        "tool_name": null
+      }
+    ],
+    "run_ends": [
+      {
+        "end_reason": "completed"
+      }
+    ]
+  },
+  {
+    "label": "T5_always_approve_session_scope",
+    "evidence": "plan/p14b_evidence/t5_always_approve.jsonl",
+    "first_run": {
+      "tool_calls": [
+        {
+          "name": null,
+          "args": null
+        }
+      ],
+      "tool_results": [
+        {
+          "name": null,
+          "ok": null,
+          "error": null
+        }
+      ],
+      "client_requests": [
+        {
+          "request_id": "b62b7976a9c54c84bfb92a4eaa25b6cd",
+          "tool_name": null
+        }
+      ],
+      "run_ends": [
+        {
+          "end_reason": "completed"
+        }
+      ]
+    },
+    "second_run": {
+      "tool_calls": [
+        {
+          "name": null,
+          "args": null
+        }
+      ],
+      "tool_results": [
+        {
+          "name": null,
+          "ok": null,
+          "error": null
+        }
+      ],
+      "client_requests": [
+        {
+          "request_id": "8de629aead1140b89b322e5731088202",
+          "tool_name": null
+        }
+      ],
+      "run_ends": [
+        {
+          "end_reason": "completed"
+        }
+      ]
+    }
+  }
+]

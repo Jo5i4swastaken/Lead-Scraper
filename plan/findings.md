@@ -328,3 +328,52 @@ Evidence: full JSONL transcripts at `plan/p14_evidence/prompt{1,2,3,4,4_expand}.
 - **F-1 (low):** Update `instructions.md` to explicitly endorse asking for clarification on vague requests rather than scraping the entire defaults grid. Today's behavior is correct; the docs just don't say so. Defer to whoever rewrites instructions for Phase 2.4b (per task_plan.md:295).
 - **F-2 (low):** Task_plan.md:49 says "find me some leads → agent uses config defaults". Re-spec this row to "agent asks for clarifying input or uses config defaults". Don't gate Phase 1 on the literal old wording.
 - **F-3 (none for now):** D5 (nested asyncio) and D6 (gating) are still open. Prompt-validation evidence here confirms the SerpAPI tool gate currently DOES fire (good for safety, bad for chat UX) and confirms `asyncio.run` inside the tool DOES work in this server-mode invocation (the McAllen call in prompt 4_expand succeeded end-to-end). That's a positive datapoint for D5 — server mode appears to use a separate worker that tolerates nested `asyncio.run`. Still belongs in 1.2 / 1.4b for formal closure.
+
+## Auto-approval validation results (P1.4b, 2026-05-18, Esteban, this worktree)
+
+**Setup:** `PYTHONPATH=src omniagents run -c agents/rgv_lead_scraper/agent.yml --mode server --port 9494 --approvals require --on-reject continue`. Harnesses at `plan/p14b_evidence/run_tests.py` (T1–T4 + a misframed T5) and `plan/p14b_evidence/run_test_alwaysapprove.py` (corrected T5b). One WebSocket connection per case for T1–T4; T5b uses one connection + one `start_run` issuing two run_pipeline calls.
+
+**Protocol note worth flagging up-front for 2.4b implementers:** the OmniAgents WebSocket emits `client_request` for *both* "tool approval gates" AND "UI status updates" — they share a method name but differ on the `params.function` field. Approval gates: `function: "ui.request_tool_approval"`. Status updates: `function: "ui.set_status"`. The CRM chat panel must filter on `function == "ui.request_tool_approval"` when deciding whether to render `ToolApprovalCard`; treating every `client_request` as an approval prompt will cause spurious popups for `Reading file...` / `Searching…` spinner toggles.
+
+### Results
+
+| # | Scenario | Approval gate fires? | Outcome |
+|---|---|---|---|
+| T1 | Prompt agent to call `get_settings_summary` (safe tool) | ❌ NO `ui.request_tool_approval` | Tool ran transparently; returned cities/categories/serpapi/export summary. Evidence: `plan/p14b_evidence/t1_get_settings_summary.jsonl`. |
+| T2 | Prompt agent to call `read_file` (safe tool) on `agents/rgv_lead_scraper/agent.yml` | ❌ NO `ui.request_tool_approval` (two `ui.set_status` status notifications observed — "Reading file..." then clear; NOT approval prompts) | File contents returned with line numbers. Evidence: `plan/p14b_evidence/t2_read_file.jsonl`. |
+| T3 | Prompt agent to call `list_directory` (safe tool) on `agents/rgv_lead_scraper` | ❌ NO `ui.request_tool_approval` (status notifications only) | Directory listing returned. Evidence: `plan/p14b_evidence/t3_list_directory.jsonl`. |
+| T4 | Prompt agent to call `run_pipeline` (SerpAPI tool, NOT in safe_tool_names) | ✅ YES — `ui.request_tool_approval` event emitted with `args: { tool: "run_pipeline", arguments: "city: 'McAllen', category: 'plumbers', export_format: 'both', config_path: None" }` | Auto-denied; tool returned `{"error": "TOOL_REJECTED", "message": "User rejected tool call", "tool": "run_pipeline"}`. Evidence: `plan/p14b_evidence/t4_run_pipeline_gates.jsonl`. |
+| T5 (misframed) | Two SEPARATE `start_run` calls in one WebSocket connection; first approved with `always_approve: true`, second observed | Second run ALSO gated | Misread: per [agent-rpc.ts:109](../../Copy%20Agent/dashboard/src/lib/agent-rpc.ts), `always_approve` is **per-run**, NOT per-session. Don't expect it to survive a new `start_run`. Evidence: `plan/p14b_evidence/t5_always_approve.jsonl`. |
+| T5b | ONE `start_run` requesting two sequential `run_pipeline` calls; first gate answered with `always_approve: true` | ✅ Only the FIRST gate fired; the 2nd `run_pipeline` call within the same run executed with zero additional prompts | Tool ran twice (McAllen → 20 leads, Edinburg → 16 leads). Approval-request count = 1, tool_called count = 2, tool_result count = 2. Evidence: `plan/p14b_evidence/t5b_always_approve_single_run.jsonl`. |
+
+**Cost to verify:** 2 SerpAPI searches (T5b McAllen + Edinburg, both real). Running total: ~63/250 monthly.
+
+**Side effect to flag:** T5b's two scrapes overwrote `agents/rgv_lead_scraper/out/leads.jsonl` (incremental export merged; still 80 lines after dedupe). Baseline at `plan/baseline_leads.jsonl` (sha1 b265df19f187fa73bad619b302538199433cea97) remains untouched.
+
+### `safe_tool_names` — final set
+
+The current [agents/rgv_lead_scraper/agent.yml:13-17](../agents/rgv_lead_scraper/agent.yml) already implements the round-5 policy correctly. No change required for the existing tool surface:
+
+```yaml
+use_safe_agent: true
+safe_agent_options:
+  safe_tool_names:
+    - get_settings_summary
+    - read_file
+    - list_directory
+```
+
+**Rule for future tool additions** (write this into the Phase 2.4b agent-side checklist):
+- Any new read-only / non-budget-consuming tool → ADD to `safe_tool_names` so the chat surface stays prompt-free.
+- Any new SerpAPI- or CRM-mutating tool (e.g. the planned `request_lead_generation` in Phase 2.4b which POSTs to `generate-leads`) → EXCLUDE from `safe_tool_names` so it goes through `ui.request_tool_approval`.
+- When `request_lead_generation` replaces `run_pipeline` (Phase 2.4b), `run_pipeline` and `run_stage` should be removed from the `tools:` list entirely; the new tool stays out of `safe_tool_names`.
+
+### D6 closure
+
+D6 in task_plan.md §1.2 was originally framed as a defect ("safe_tool_names excludes the actual work tools — requires user approval"). Per round-5 (findings.md "User decisions (round 5)"), that's the **desired** behavior: only the SerpAPI-consuming tool should gate. The current `agent.yml` already encodes the correct policy. D6 is therefore **closed as a defect** — not by a config change, but by the policy reframing. Documenting here so reviewers don't re-open it.
+
+### Risks / things 2.4b implementers still need to handle
+
+1. **`always_approve` does NOT carry across chat turns** (separate `start_run` calls). If the CRM chat surface presents distinct "turns" each as its own run, every turn that needs `request_lead_generation` will prompt again. Mitigation: keep a client-side `pendingAlwaysApprove: Set<toolName>` that auto-answers `client_request` with `approved: true, always_approve: true` whenever a tool is in the set. The Copy Agent dashboard already implements this pattern — port it (see [useAgentWebSocket.ts:365](../../Copy%20Agent/dashboard/src/hooks/useAgentWebSocket.ts)).
+2. **Status-update vs approval discrimination.** The CRM `ToolApprovalCard` must check `params.function === "ui.request_tool_approval"` before rendering. Status spinners come through the same `client_request` JSON-RPC method and must be routed to the `ToolTraceRow` UI instead.
+3. **PYTHONPATH gotcha** (carryover from P1.4 — worth restating). The agent server must launch with `PYTHONPATH=src` (or have `lead_scraper` installed). Without it, tool imports silently fail and the server starts with **zero registered tools**; every prompt then returns text-only with no tool_called events. Add a pre-flight check in the chat-startup README.
