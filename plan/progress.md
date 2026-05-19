@@ -216,3 +216,28 @@ Session log for the Lead-Scraper → CRM integration project.
 - Run a live `lead-scraper run` and a live OmniAgents `run_pipeline` invocation before promoting this branch, or accept the offline replay as sufficient evidence for the gate?
 
 **Errors encountered:** none.
+
+---
+
+## 2026-05-18 — Phase 1.3: failure-mode matrix complete (worktree dcc0c, Rafael)
+
+**Done:**
+- Wrote [tests/test_failure_modes.py](../tests/test_failure_modes.py) — 16 tests covering all 10 rows in task_plan.md §1.3.
+- Installed `pytest` into `.venv` (project had no test runner pinned). Existing suite still passes via `unittest`; pytest discovers everything cleanly.
+- Full suite now 22/22 passing: `tests/test_export.py` (3), `tests/test_failure_modes.py` (16), `tests/test_lead_quality_scorer.py` (2), `tests/test_maps_serpapi.py` (1).
+- Appended "Failure-mode matrix status" section to [findings.md](findings.md) with a per-row evidence table.
+- Flipped all 10 checkboxes in task_plan.md §1.3 with date + worktree + evidence path; updated the Phase-tracking row.
+
+**Key findings worth flagging:**
+- **Backoff actually works** (row 2). `_sleep_backoff` in [scraper.py:112](../src/lead_scraper/scrapers/maps_serpapi/scraper.py) is wired correctly: 5 distinct `_fetch_json` attempts before final raise. Phase 2.2 edge-function port can copy the algorithm verbatim. The escalation trigger in the team-lead brief ("if backoff doesn't actually retry, block 2.2") is **clear**.
+- **Concurrency = last-writer-wins on trace files** (row 7). When two scrapes share the same `out_dir` AND the same `(city, category)`, both leads-lists return correctly but the raw-trace JSON file gets overwritten. Documented as accepted behaviour — Phase 2 keys audit rows on `(user_id, created_at)`, so this concern is local-CLI-only. No corruption of leads data itself. **No CTO escalation needed.**
+- **D2 fix (`maps_url` from `place_id`) is in worktree `b354b`, NOT in `dcc0c`.** The current scraper here still reads `item.get("link")`. The failure-mode tests don't depend on D2 either way (they assert behaviour, not the specific URL string). When `b354b` lands on `main`, none of these tests will break.
+
+**No waivers required.** Every row in 1.3 has a passing test.
+
+**Out of scope (untouched):**
+- D1–D6 (separate tasks, owned elsewhere).
+- Performance / load tests.
+- 1.4 prompt-validation, 1.4b auto-approval, 1.4c session API.
+
+**Errors encountered:** none.

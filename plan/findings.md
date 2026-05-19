@@ -268,3 +268,24 @@ The local Python `lead_scraper` CLI (`lead-scraper run`) keeps working for non-C
 ### Why D5/D6 still matter (Phase 1 hard-blockers stand)
 - **D5 (nested asyncio):** the OmniAgents WebSocket server runs in its own event loop. Any tool that calls `asyncio.run(...)` inside that loop will crash. Must fix.
 - **D6 (safe-agent gating):** if the scraping tool requires per-call user approval, every chat turn becomes "click yes" — defeats the chat UX. Mark the new `request_lead_generation` tool as auto-approved when invoked from a chat session OR keep the approval but default the UI to `always_approve: true` for admins (matches Copy Agent's pattern).
+
+## Failure-mode matrix status (Phase 1.3)
+
+Completed 2026-05-18 (Rafael, worktree dcc0c). Suite: [tests/test_failure_modes.py](../tests/test_failure_modes.py). Result: 16/16 pass, full project suite 22/22 pass.
+
+| # | Failure mode | Status | Evidence |
+|---|---|---|---|
+| 1 | Missing `SERPAPI_API_KEY` → clean error | ✅ test | `test_missing_serpapi_api_key_raises_clean_error`, `test_scraper_construction_requires_api_key` — `RuntimeError("SERPAPI_API_KEY is required …")` raised by `require_serpapi_api_key()` and on `SerpApiGoogleMapsScraper.__init__`. |
+| 2 | SerpAPI 429/500 → backoff + max 5 attempts | ✅ test | `test_serpapi_http_429_retries_up_to_five_attempts` (exactly 5 calls then re-raise), `test_serpapi_http_500_retries_then_succeeds` (2 retries → 3rd attempt yields payload), `test_serpapi_non_retryable_4xx_raises_immediately` (401 = no retry). Sleeps short-circuited by `_fast_backoff` fixture. |
+| 3 | Empty `local_results` | ✅ test | `test_empty_local_results_returns_empty_list`, `test_missing_local_results_key_returns_empty_list`. |
+| 4 | Malformed item (missing title / non-numeric reviews) | ✅ test | `test_malformed_item_missing_title_is_dropped` (silent drop, no crash), `test_malformed_item_non_numeric_reviews_normalizes_to_none` (string "many" → `None`, "five-stars" → `None`, valid 17 / 4.5 pass through). |
+| 5 | Non-ASCII city/category | ✅ test | `test_non_ascii_city_and_category_round_trip` — URL is `urllib.parse.urlencode`'d so "México" becomes `M%C3%A9xico`; trace persistence (`_persist_raw`) round-trips unicode via `ensure_ascii=False`. `_safe_slug` strips to ASCII-only filename, no crash. |
+| 6 | Network timeout | ✅ test | `test_network_timeout_retries_then_raises` — `TimeoutError` is caught by the `URLError, TimeoutError` arm of `_serpapi_request`, retried to attempt 5, then propagated. |
+| 7 | Concurrent `run_pipeline` — trace/output collision | ⚠️ test + documented behaviour | `test_concurrent_scrapes_share_trace_dir_last_writer_wins` — both scrapes return their leads, but `_persist_raw` writes to `{slug(query)}.json` so the same (city, category) query yields one file: second writer overwrites first. **Phase 2 implication:** the edge function path uses `lead_generation_audit` rows keyed on `(user_id, created_at)`; per-call collision risk does not carry over. For the local CLI / agent path, if two operators want isolated traces they must point `out_dir` somewhere unique. Logged as a known-and-accepted behaviour, not a bug. |
+| 8 | Dedupe across categories | ✅ test | `test_dedupe_collapses_same_place_id_across_categories` — `_dedupe` in [pipeline.py:16](../src/lead_scraper/pipeline.py) collapses on `flags["google_place_id"]` first; evidence from the dropped duplicate is merged into the survivor. |
+| 9 | Output directory missing / not writable | ✅ test | `test_jsonl_exporter_creates_missing_output_dir` (parents=True auto-create), `test_jsonl_exporter_unwritable_directory_raises` (chmod 0o500 → `PermissionError` surfaces cleanly). Root-skipped where `geteuid()==0`. |
+| 10 | Existing JSONL — incremental merges | ✅ test | `test_jsonl_incremental_merges_new_leads_into_existing_file` — seed run writes 1 row, second run with 1 new + 1 duplicate yields 2 total rows with ids `place_id:PID-SEED` then `place_id:PID-NEW`. Complements existing `test_jsonl_incremental_dedup` in [test_export.py](../tests/test_export.py). |
+
+**Backoff verification (row 2 — explicit because it's a Phase 2 gating concern):** the existing `_sleep_backoff` in [scraper.py:112](../src/lead_scraper/scrapers/maps_serpapi/scraper.py) does actually retry — the test counted 5 distinct calls to `_fetch_json` before the final raise. The 2.2 edge-function port can copy this algorithm directly. (Listed as an escalation trigger in the team-lead brief; non-issue.)
+
+**No waivers required.** Every row in 1.3 has a passing test or a documented-behaviour entry (row 7).

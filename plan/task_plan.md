@@ -31,16 +31,16 @@ Discovered during planning — must be confirmed or ruled out before integration
 ### 1.3 Failure-mode test matrix
 **Task-tracking instruction:** When you finish any checkbox below, edit this file: flip `- [ ]` to `- [x]` and append a one-line note (date + worktree/commit + evidence path). When the whole section passes, update the matching row in the "Phase tracking" table at the bottom of this file.
 
-- [ ] Missing `SERPAPI_API_KEY` → clean error.
-- [ ] SerpAPI 429 / 500 → backoff path actually triggers; max 5 attempts; surfaces final failure cleanly.
-- [ ] SerpAPI returns empty `local_results`.
-- [ ] SerpAPI returns malformed item (missing `title`, non-numeric `reviews`).
-- [ ] City/category with special characters / non-ASCII.
-- [ ] Network timeout (mock urlopen to hang).
-- [ ] Two concurrent `run_pipeline` calls — trace/output file collision?
-- [ ] Dedupe: two identical `place_id`s across categories — only one row.
-- [ ] Output directory missing / not writable.
-- [ ] Existing JSONL with prior runs — incremental export merges rather than overwrites.
+- [x] Missing `SERPAPI_API_KEY` → clean error. **Done 2026-05-18 (Rafael, worktree dcc0c): `tests/test_failure_modes.py::test_missing_serpapi_api_key_raises_clean_error` + `::test_scraper_construction_requires_api_key`.**
+- [x] SerpAPI 429 / 500 → backoff path actually triggers; max 5 attempts; surfaces final failure cleanly. **Done 2026-05-18 (Rafael, worktree dcc0c): `tests/test_failure_modes.py::test_serpapi_http_429_retries_up_to_five_attempts` (5 attempts), `::test_serpapi_http_500_retries_then_succeeds` (2 retries then success), `::test_serpapi_non_retryable_4xx_raises_immediately` (401 = no retry).**
+- [x] SerpAPI returns empty `local_results`. **Done 2026-05-18 (Rafael, worktree dcc0c): `tests/test_failure_modes.py::test_empty_local_results_returns_empty_list` + `::test_missing_local_results_key_returns_empty_list`.**
+- [x] SerpAPI returns malformed item (missing `title`, non-numeric `reviews`). **Done 2026-05-18 (Rafael, worktree dcc0c): `tests/test_failure_modes.py::test_malformed_item_missing_title_is_dropped` + `::test_malformed_item_non_numeric_reviews_normalizes_to_none`.**
+- [x] City/category with special characters / non-ASCII. **Done 2026-05-18 (Rafael, worktree dcc0c): `tests/test_failure_modes.py::test_non_ascii_city_and_category_round_trip`.**
+- [x] Network timeout (mock urlopen to hang). **Done 2026-05-18 (Rafael, worktree dcc0c): `tests/test_failure_modes.py::test_network_timeout_retries_then_raises`.**
+- [x] Two concurrent `run_pipeline` calls — trace/output file collision? **Done 2026-05-18 (Rafael, worktree dcc0c): `tests/test_failure_modes.py::test_concurrent_scrapes_share_trace_dir_last_writer_wins` — documents last-writer-wins for same (city,category); see findings.md row 7 for the rationale (acceptable; Phase 2 audit keying makes it moot).**
+- [x] Dedupe: two identical `place_id`s across categories — only one row. **Done 2026-05-18 (Rafael, worktree dcc0c): `tests/test_failure_modes.py::test_dedupe_collapses_same_place_id_across_categories`.**
+- [x] Output directory missing / not writable. **Done 2026-05-18 (Rafael, worktree dcc0c): `tests/test_failure_modes.py::test_jsonl_exporter_creates_missing_output_dir` + `::test_jsonl_exporter_unwritable_directory_raises`.**
+- [x] Existing JSONL with prior runs — incremental export merges rather than overwrites. **Done 2026-05-18 (Rafael, worktree dcc0c): `tests/test_failure_modes.py::test_jsonl_incremental_merges_new_leads_into_existing_file` (and pre-existing `tests/test_export.py::test_jsonl_incremental_dedup`).**
 
 ### 1.4 Prompt / agent behavior validation
 **Task-tracking instruction:** When you finish any checkbox below, edit this file: flip `- [ ]` to `- [x]` and append a one-line note (date + worktree/commit + evidence path). When the whole section passes, update the matching row in the "Phase tracking" table at the bottom of this file.
@@ -384,7 +384,7 @@ No `chat-with-agent` proxy needed (browser talks WS directly to the local agent)
 |-------|--------|-----------------|
 | 1.1 Baseline run | ✅ complete (2026-05-18) | pipeline returns leads; agent calls right tool |
 | 1.2 Known defects | not_started | D1+D2 fixed; D3–D6 fixed or deferred |
-| 1.3 Failure matrix | not_started | every row has a test or doc'd waiver |
+| 1.3 Failure matrix | ✅ complete (2026-05-18) | every row has a test or doc'd waiver — 10/10 covered by `tests/test_failure_modes.py` (16 tests, all pass); status table in findings.md |
 | 1.4 Prompt validation | not_started | all 4 scenarios pass |
 | 1.4b Auto-approval test | not_started | non-SerpAPI tools auto-approve; SerpAPI tool gates correctly |
 | 1.4c Session API surface | not_started | session-api-surface.md doc produced; --session-id verified; list API confirmed or fallback chosen |
