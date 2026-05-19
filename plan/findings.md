@@ -42,28 +42,174 @@ Research log. Append discoveries here. Each entry: short title, file:line eviden
 - **Evidence:** [agent.yml](../agents/rgv_lead_scraper/agent.yml) lists only read-only tools in `safe_tool_names`. `run_pipeline` and `run_stage` are gated → require user approval at runtime.
 - **Implication:** A CRM backend cannot trigger the agent autonomously without bypassing this gate. Reinforces the case for Option A (direct Python invocation, no agent layer in the hot path).
 
-## Output contract (draft — finalize in 1.5)
+## Output contract (frozen)
 
-Current JSONL row shape, derived from [export/schema.py](../src/lead_scraper/export/schema.py):
+**Status:** locked 2026-05-18 (Leonardo, worktree 1c866). Source of truth: [src/lead_scraper/export/schema.py](../src/lead_scraper/export/schema.py) `lead_to_export_dict()` + `CSV_COLUMNS`. Enforced by [tests/test_output_contract.py](../tests/test_output_contract.py) (13 tests, all green). The Phase 2.2 Deno edge function ports this verbatim — any breaking change must (a) update this section, (b) update the test, (c) update the §2.2 field map in [task_plan.md](task_plan.md).
 
-| Field | Type | Nullable | Notes |
-|---|---|---|---|
-| `lead_id` | string | no | `place_id:...` or `maps_url:...` or `fallback:<sha>` |
-| `name` | string | no | |
-| `category` | string | no | from SerpAPI `type` or query category |
-| `address` | string | yes | |
-| `phone` | string | yes | freeform, e.g. `(956) 686-6656` |
-| `website` | string | yes | may include UTM params |
-| `review_count` | int | yes | |
-| `rating` | float | yes | |
-| `maps_url` | string | yes | derived from `place_id` (D2 fixed) |
-| `social_links_json` | object | no | empty until enricher exists |
-| `flags_json` | object | no | contains `google_place_id`, `query_category` |
-| `lead_score` | float | yes | from SimpleHeuristicScorer |
-| `qualified` | bool | yes | populated by `LeadQualityScorer` (D1 fixed) |
-| `qualification_reasons` | string | no | comma-joined active factors; populated when score ≥ threshold (D1 fixed) |
-| `evidence_json` | array | no | includes full SerpAPI raw item |
-| `exported_at` | ISO8601 string | no | UTC |
+### Field-by-field spec
+
+Field order matches `CSV_COLUMNS` and is part of the contract. Every JSONL row is one self-contained JSON object with **exactly** these 16 keys — no extras, no omissions.
+
+| # | Field | JSON type | Nullable | Source | Notes |
+|---|---|---|---|---|---|
+| 1 | `lead_id` | string | **no** | derived ([identity.py](../src/lead_scraper/export/identity.py)) | Prefix tells you how it was derived: `place_id:<id>` (preferred, ~100% coverage from SerpAPI Google Maps), `maps_url:<url>` (fallback), `fallback:<sha256[:24]>` (last resort). Used as `external_id` in `public.leads` + `public.lead_candidates` for free dedupe. **Stable** — see "Stability proof" below. |
+| 2 | `name` | string | **no** | `local_results[].title` | Business name as Google Maps shows it. |
+| 3 | `category` | string | **no** | `local_results[].type` ∥ query `category` | SerpAPI `type` when present, otherwise the query-time category (e.g. `"plumbers"`). |
+| 4 | `address` | string \| null | yes | `local_results[].address` | Full street address with city/state/zip. |
+| 5 | `phone` | string \| null | yes | `local_results[].phone` | Freeform, e.g. `"(956) 686-6656"`. No normalisation. |
+| 6 | `website` | string \| null | yes | `local_results[].website` | May carry UTM params from Google's redirect (`?utm_source=google&utm_medium=organic&…`). CRM should display as-is, not strip. |
+| 7 | `review_count` | integer \| null | yes | `local_results[].reviews` | Coerced via `int()`; non-numeric → null (see failure-mode row 4). |
+| 8 | `rating` | number \| null | yes | `local_results[].rating` | Float, 1 decimal typical. Non-numeric → null. |
+| 9 | `maps_url` | string \| null | yes | derived from `place_id` (D2 fix) | `https://www.google.com/maps/place/?q=place_id:<id>` when `place_id` present; `https://www.google.com/maps/?q=<lat>,<lng>` from `gps_coordinates` as fallback; null only when both are absent. **NEVER read `local_results[].link`** — SerpAPI doesn't return that for Google Maps. |
+| 10 | `social_links_json` | object | **no** | enricher | Currently `{}` always — no enricher implemented (see [enrichers/noop.py](../src/lead_scraper/enrichers/noop.py)). Shape when populated: `{"facebook": "<url>", "instagram": "<url>", …}`. Phase 2 CRM treats `{}` as "no socials known". |
+| 11 | `flags_json` | object | **no** | scraper + scorer | Always present. Known keys after the D1 fix: `google_place_id` (string, copied from `place_id` when available), `query_category` (string, the category arg the scrape was issued with), and one boolean per active `LeadQualityScorer` factor: `no_website_listed`, `no_website_verified`, `low_reviews`, `incomplete_profile`, `weak_presence`, `inactive_social`. Future-extensible — readers MUST tolerate unknown keys. |
+| 12 | `lead_score` | number \| null | yes | `LeadQualityScorer` | 0.0–100.0 after D1 fix (was simple `rating*20 + reviews/10` pre-fix). Null only if scoring was skipped (e.g. `run_stage("scrape")` without a follow-on score). |
+| 13 | `qualified` | boolean \| null | yes | `LeadQualityScorer` | After D1 fix: real boolean. Null only when scoring was skipped. Contract for Phase 2: the edge function calls the scorer in the same pass, so the CRM never sees null. |
+| 14 | `qualification_reasons` | string | **no** | derived from `evidence` | Comma-joined, alphabetically sorted list of active factor names (e.g. `"low_reviews,no_website_listed,weak_presence"`). Empty string when no factors active (e.g. lead with website + plenty of reviews). NEVER null. |
+| 15 | `evidence_json` | array | **no** | scraper + scorer | Heterogeneous list of provenance records. Two known item shapes: `{"source": "serpapi", "query": "<query>", "raw": {<full SerpAPI item>}}` and `{"type": "lead_quality_factor", "factor": "<name>", "active": <bool>, "weight": <number>, "contribution": <number>}` + a closing `{"type": "lead_quality_summary", "lead_score": <number>, "qualified_threshold": <number>, "qualified": <bool>}`. Readers MUST tolerate unknown item shapes. CRM stores this whole array in `generated_from.evidence` (jsonb) — useful for audits, not surfaced in the UI. |
+| 16 | `exported_at` | string | **no** | `datetime.now(timezone.utc).isoformat()` | ISO 8601 UTC, e.g. `"2026-05-18T23:29:12.680792+00:00"`. Always ends `+00:00`. |
+
+### Required vs nullable summary
+
+- **Never null (6 fields):** `lead_id`, `name`, `category`, `social_links_json`, `flags_json`, `qualification_reasons`, `evidence_json`, `exported_at` — JSON shape guarantees a value (string `""` or `{}`/`[]`), even when "empty".
+- **JSON `null` allowed (8 fields):** `address`, `phone`, `website`, `review_count`, `rating`, `maps_url`, `lead_score`, `qualified` — all derived from optional SerpAPI fields or skipped scoring.
+
+### Stability proof — `lead_id` across re-runs
+
+Derivation logic at [identity.py](../src/lead_scraper/export/identity.py):
+
+```
+if flags.google_place_id:  → "place_id:" + place_id
+elif maps_url:             → "maps_url:" + maps_url
+else:                      → "fallback:" + sha256(name|category|phone|address)[0:24]
+```
+
+Stability cases:
+1. **`place_id` path (dominant).** SerpAPI Google Maps returns the same `place_id` for the same business across days/weeks. Re-running the same `(city, category)` scrape yields the same `lead_id` for every existing business. **Verified** by `test_lead_id_is_stable_across_independent_constructions`.
+2. **`maps_url` fallback.** After the D2 fix, `maps_url` is `https://www.google.com/maps/place/?q=place_id:<id>` — itself a function of `place_id`, so this path is also stable.
+3. **`fallback:` path.** Triggers only when both `place_id` and `maps_url` are absent (no observed cases in the 80-lead baseline). Even then, the hash inputs are normalised (`.strip().lower()` on name/category/address), so cosmetic differences (whitespace, case) collapse to the same id. **Verified** by `test_lead_id_fallback_normalises_whitespace_and_case`.
+
+Re-run safety: the JSONL exporter's incremental mode keys on `lead_id` and skips already-seen rows ([jsonl.py:30-33](../src/lead_scraper/export/jsonl.py)), so re-running the scraper is idempotent. Phase 2's `lead_candidates.external_id` UNIQUE constraint gets free CRM-side dedupe from the same property.
+
+**Caveat for `fallback:` only:** if a business changes its name or phone number between runs, its `fallback:` id will drift. Acceptable — fallback path is rare, and the CRM treats them as new leads (correct semantics: a renamed business behaves like a new one to a salesperson). No mitigation needed for v1.
+
+### Canonical sample rows
+
+A "qualified-true" row (lead_score ≥ 50, multiple active factors):
+
+```json
+{
+  "lead_id": "place_id:ChIJldAKEX6lZYYRWhjCqtbUhMM",
+  "name": "Hugo's Plumbing Service",
+  "category": "Plumber",
+  "address": "3005 Providence Ave, McAllen, TX 78504",
+  "phone": "(956) 503-8368",
+  "website": null,
+  "review_count": 19,
+  "rating": 5.0,
+  "maps_url": "https://www.google.com/maps/place/?q=place_id:ChIJldAKEX6lZYYRWhjCqtbUhMM",
+  "social_links_json": {},
+  "flags_json": {
+    "google_place_id": "ChIJldAKEX6lZYYRWhjCqtbUhMM",
+    "query_category": "plumbers",
+    "no_website_listed": true,
+    "no_website_verified": false,
+    "low_reviews": true,
+    "incomplete_profile": false,
+    "weak_presence": true,
+    "inactive_social": false
+  },
+  "lead_score": 60.0,
+  "qualified": true,
+  "qualification_reasons": "low_reviews,no_website_listed,weak_presence",
+  "evidence_json": [
+    {"type": "lead_quality_factor", "factor": "no_website_listed", "active": true,  "weight": 25.0, "contribution": 25.0},
+    {"type": "lead_quality_factor", "factor": "no_website_verified","active": false, "weight": 15.0, "contribution": 0.0},
+    {"type": "lead_quality_factor", "factor": "low_reviews",        "active": true,  "weight": 15.0, "contribution": 15.0},
+    {"type": "lead_quality_factor", "factor": "incomplete_profile", "active": false, "weight": 10.0, "contribution": 0.0},
+    {"type": "lead_quality_factor", "factor": "weak_presence",      "active": true,  "weight": 20.0, "contribution": 20.0},
+    {"type": "lead_quality_factor", "factor": "inactive_social",    "active": false, "weight": 15.0, "contribution": 0.0},
+    {"type": "lead_quality_summary","lead_score": 60.0, "qualified_threshold": 50.0, "qualified": true}
+  ],
+  "exported_at": "2026-05-18T23:29:12.681023+00:00"
+}
+```
+
+A "qualified-false" row (no factors active, lead_score 0):
+
+```json
+{
+  "lead_id": "place_id:ChIJj7rfF9OgZYYRaYlfOXw-ups",
+  "name": "All Valley Plumbing & A/C",
+  "category": "Plumber",
+  "address": "2505 Buddy Owens Blvd Suite E, McAllen, TX 78504",
+  "phone": "(956) 686-6656",
+  "website": "http://www.allvalleyplumbing.com/?utm_source=google&utm_medium=organic&utm_campaign=gbp_listing&utm_content=website_button",
+  "review_count": 467,
+  "rating": 4.7,
+  "maps_url": "https://www.google.com/maps/place/?q=place_id:ChIJj7rfF9OgZYYRaYlfOXw-ups",
+  "social_links_json": {},
+  "flags_json": {
+    "google_place_id": "ChIJj7rfF9OgZYYRaYlfOXw-ups",
+    "query_category": "plumbers",
+    "no_website_listed": false,
+    "no_website_verified": false,
+    "low_reviews": false,
+    "incomplete_profile": false,
+    "weak_presence": false,
+    "inactive_social": false
+  },
+  "lead_score": 0.0,
+  "qualified": false,
+  "qualification_reasons": "",
+  "evidence_json": [
+    {"type": "lead_quality_factor","factor":"no_website_listed","active":false,"weight":25.0,"contribution":0.0},
+    {"type": "lead_quality_factor","factor":"no_website_verified","active":false,"weight":15.0,"contribution":0.0},
+    {"type": "lead_quality_factor","factor":"low_reviews","active":false,"weight":15.0,"contribution":0.0},
+    {"type": "lead_quality_factor","factor":"incomplete_profile","active":false,"weight":10.0,"contribution":0.0},
+    {"type": "lead_quality_factor","factor":"weak_presence","active":false,"weight":20.0,"contribution":0.0},
+    {"type": "lead_quality_factor","factor":"inactive_social","active":false,"weight":15.0,"contribution":0.0},
+    {"type": "lead_quality_summary","lead_score":0.0,"qualified_threshold":50.0,"qualified":false}
+  ],
+  "exported_at": "2026-05-18T23:29:12.680792+00:00"
+}
+```
+
+Both samples are verbatim from [agents/rgv_lead_scraper/out/leads.jsonl](../agents/rgv_lead_scraper/out/leads.jsonl) (lines 1 and 7 respectively).
+
+### Payload shape Deno-side will consume
+
+Direct port. The Phase 2.2 edge function's field map ([task_plan.md §2.2](task_plan.md)) already mirrors this contract one-for-one. Mapping into the CRM tables:
+
+| JSONL field | `public.leads` column | `public.lead_candidates` column |
+|---|---|---|
+| `lead_id` | `external_id` (UNIQUE) | `external_id` (UNIQUE) |
+| `name` | `name`, `company` | `name`, `company` |
+| `phone` | `phone` | `phone` |
+| `website` | `website` (new) | `website` |
+| `address` | `address` (new) | `address` |
+| `rating` | `rating` (new) | `rating` |
+| `review_count` | `review_count` (new) | `review_count` |
+| `lead_score` | `lead_score` (new) | `lead_score` |
+| `qualified` | `qualified` (new) | `qualified` |
+| `category` | first element of `tags` | (part of) `tags` |
+| `flags_json.query_category` + caller city | (part of) `tags` | `seen_in_search.city`, `seen_in_search.category` |
+| `evidence_json` | `generated_from.evidence` (jsonb) | (omit — too large for staging) |
+| `maps_url`, `social_links_json`, `flags_json`, `qualification_reasons`, `exported_at` | not persisted on `leads` directly; CRM derives or omits | stored in `seen_in_search` jsonb sidecar where useful |
+
+**Fields the CRM does NOT expose** (kept internal): `evidence_json`'s raw SerpAPI dump (audit-only — admins can query `lead_generation_audit` if they need it); `flags_json` factor booleans (the user-facing surface is `qualified` + `qualification_reasons`).
+
+**Nothing in the current JSONL is sensitive enough to withhold from the CRM** — all values come from Google Maps' public listing data. No escalation needed.
+
+### Change-control rule
+
+Any PR that adds, renames, removes, or re-types a field in [schema.py](../src/lead_scraper/export/schema.py) MUST update:
+1. `CSV_COLUMNS` ordering (the test pins it).
+2. The `FROZEN_FIELDS` tuple in [tests/test_output_contract.py](../tests/test_output_contract.py).
+3. This section's field table.
+4. The Phase 2.2 field map in [task_plan.md](task_plan.md).
+
+The contract test will fail loudly if any of (1) or (2) drift.
 
 ## CRM (WorkLogicly-CRM) — resolved
 

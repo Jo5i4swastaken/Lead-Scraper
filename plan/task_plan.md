@@ -71,9 +71,9 @@ Discovered during planning — must be confirmed or ruled out before integration
 ### 1.5 Output contract for CRM consumption
 **Task-tracking instruction:** When you finish any checkbox below, edit this file: flip `- [ ]` to `- [x]` and append a one-line note (date + worktree/commit + evidence path). When the whole section passes, update the matching row in the "Phase tracking" table at the bottom of this file.
 
-- [ ] Lock the JSONL schema (see [findings.md](findings.md) "Output contract (draft)"). Document every field type + nullability.
-- [ ] Confirm `lead_id` stability across re-runs.
-- [ ] Decide payload shape Deno-side will consume — direct port of field mapping is preferred.
+- [x] Lock the JSONL schema (see [findings.md](findings.md) "Output contract (frozen)"). Document every field type + nullability. **Done 2026-05-18 (Leonardo, worktree 1c866): 16-field contract pinned in `tests/test_output_contract.py` (`FROZEN_FIELDS` matches `CSV_COLUMNS`); per-field types + nullability documented in `plan/findings.md` "Output contract (frozen)" section.**
+- [x] Confirm `lead_id` stability across re-runs. **Done 2026-05-18 (Leonardo, worktree 1c866): three stability tests pass — `test_lead_id_is_stable_across_repeated_calls`, `test_lead_id_is_stable_across_independent_constructions`, `test_lead_id_fallback_normalises_whitespace_and_case`. Place_id path is dominant + stable by construction; maps_url is a deterministic function of place_id post-D2; fallback hash normalises whitespace + case. Caveat (renamed business drifts on fallback path) documented in findings.md "Stability proof".**
+- [x] Decide payload shape Deno-side will consume — direct port of field mapping is preferred. **Done 2026-05-18 (Leonardo, worktree 1c866): direct port. JSONL→CRM column mapping table written into `plan/findings.md` "Payload shape Deno-side will consume" — mirrors §2.2 field map. No fields withheld (all SerpAPI public-listing data). Internal-only fields (`evidence_json`, factor booleans in `flags_json`) noted.**
 
 ### 1.6 Phase 1 acceptance gate
 **Task-tracking instruction:** When this gate passes, update the matching row in the "Phase tracking" table at the bottom of this file and unblock Phase 2 rows.
@@ -388,7 +388,7 @@ No `chat-with-agent` proxy needed (browser talks WS directly to the local agent)
 | 1.4 Prompt validation | ✅ complete (2026-05-18) | all 4 scenarios pass (Andrés, worktree 94b5f) — see `plan/p14_evidence/` and findings.md "Prompt validation results" |
 | 1.4b Auto-approval test | ✅ complete (2026-05-18) | non-SerpAPI tools auto-approve (T1/T2/T3); SerpAPI tool gates with `ui.request_tool_approval` (T4); always_approve suppresses subsequent same-tool gates within a run (T5b) — see `plan/p14b_evidence/` and findings.md "Auto-approval validation results" |
 | 1.4c Session API surface | not_started | session-api-surface.md doc produced; --session-id verified; list API confirmed or fallback chosen |
-| 1.5 Output contract | not_started | schema frozen + documented |
+| 1.5 Output contract | ✅ complete (2026-05-18) | 16-field contract frozen in `findings.md` "Output contract (frozen)"; pinned by `tests/test_output_contract.py` (13 tests pass, full suite 35/35); `lead_id` stability proved; Deno field map written |
 | 1.6 Phase 1 gate | blocked | all of 1.1–1.5 |
 | 2.1 Schema migration | blocked | leads extended; lead_candidates + audit tables created; types updated |
 | 2.2 Edge function | blocked | generate-leads deployed; admin gate + cache + budget + 2-stage write |

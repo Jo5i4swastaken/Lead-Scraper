@@ -297,3 +297,26 @@ Session log for the Lead-Scraper → CRM integration project.
 **Errors encountered:** initial summary collector in `run_tests.py` misread the OmniAgents event shape (`params.name` vs `params.tool`, no discriminator on `function`). Caught it on re-inspection; the raw JSONL transcripts are correct. Re-derived results from the raw events.
 
 **Out of scope (untouched):** D3 pagination, D4 stage independence, D5 nested asyncio (positive datapoint from P1.4 still stands — T5b also ran nested `asyncio.run` end-to-end twice with no crash, adds confirmation). 1.4c session-API surface remains open.
+
+---
+
+## 2026-05-18 — Phase 1.5: Output contract frozen (Leonardo, this worktree)
+
+**Done:**
+- Inspected canonical row shape by reading [export/schema.py](../src/lead_scraper/export/schema.py) `lead_to_export_dict()` + `CSV_COLUMNS`, [export/identity.py](../src/lead_scraper/export/identity.py), [models.py `Lead`](../src/lead_scraper/models.py), and a representative row from [agents/rgv_lead_scraper/out/leads.jsonl](../agents/rgv_lead_scraper/out/leads.jsonl) (post-D1/D2 fix output, copied here from worktree b354b).
+- Wrote [tests/test_output_contract.py](../tests/test_output_contract.py) — 13 tests that pin field set, ordering, types, nullability, `lead_id` stability (3 separate stability assertions), `qualified` boolean post-scoring, and qualification_reasons join semantics. Full suite 35/35 pass (`PYTHONPATH=src .venv/bin/python -m pytest`).
+- Replaced [findings.md](findings.md) "Output contract (draft)" with "Output contract (frozen)": full per-field type+nullability table, two canonical sample rows (qualified=true and qualified=false, both verbatim from `out/leads.jsonl`), `lead_id` stability proof, Deno-side payload shape mapping (JSONL → `public.leads` / `public.lead_candidates` columns), and a change-control rule listing the 4 files to edit together if the schema ever moves.
+- Flipped all three §1.5 checkboxes in [task_plan.md](task_plan.md) + updated the Phase-tracking row to ✅ complete.
+
+**Decisions made:**
+- **Direct port to Deno.** No translation layer between the Python schema and the edge function. The Phase 2.2 field map already mirrors the Python contract one-for-one; documented the mapping explicitly so the Deno port has a single source of truth to copy.
+- **No fields withheld from the CRM.** Everything in the JSONL comes from Google Maps' public listing data — nothing sensitive, no internal debug data to redact. Internal-only fields (`evidence_json`'s raw SerpAPI dump; the factor booleans in `flags_json`) are noted as audit-only, not surfaced in CRM UI, but still pass through.
+- **`lead_id` stability is good enough as-is.** Dominant `place_id:` path is stable by SerpAPI guarantee; `maps_url:` fallback is a deterministic function of `place_id` post-D2; `fallback:` hash normalises whitespace+case. The one drift case (business renames itself between runs on the fallback path) is acceptable — fallback is rare in real data and the CRM semantics ("treat renamed business as new") are correct anyway. No CTO escalation needed.
+
+**Phase 1.6 gate — NOT flipped.** Per task_plan.md §1.6 criteria, the gate requires: D1+D2 fixed (currently in worktree b354b only, not yet on `main`), D5+D6 fixed (D6 closed-via-reframing in 1.4b ✅; D5 has positive datapoints from 1.4 and 1.4b but no formal closure), D3+D4 fixed or deferred with rationale (untouched), failure-modes documented (✅ from 1.3), and contract frozen (✅ from this task). So 1.6 remains `blocked` on D3/D4/D5 disposition and the D1/D2 merge. Phase 2 rows accordingly remain `blocked`.
+
+**Errors encountered:** none.
+
+**Side effect to flag:** none — read-only work plus one new test file plus three doc edits. No SerpAPI cost. `out/leads.jsonl` untouched (baseline already preserved at [agents/rgv_lead_scraper/out/leads.pre_fix.jsonl](../agents/rgv_lead_scraper/out/leads.pre_fix.jsonl)).
+
+**Next actions (owned by whoever picks up 1.6):** drive D5 to formal closure (currently positive datapoints only); decide D3 / D4 fix-or-defer-with-rationale; promote the worktree b354b D1+D2 fixes to `main`. Once those land, flip the 1.6 row + unblock Phase 2.
