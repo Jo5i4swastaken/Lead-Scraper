@@ -26,13 +26,25 @@ Research log. Append discoveries here. Each entry: short title, file:line eviden
 - **Implication:** CRM users can't click through to verify the business on Google Maps.
 - **Fix:** new helper `_derive_maps_url(item, place_id=…)` returns `https://www.google.com/maps/place/?q=place_id:<id>` when `place_id` is present, falling back to `https://www.google.com/maps/?q=<lat>,<lng>` from `gps_coordinates`. The scraper no longer reads `link` at all. Offline replay shows 80/80 leads now carry a non-null `maps_url`. Worktree `b354b` — not yet on main.
 
-### D3: No pagination
+### D3: No pagination — **deferred (2026-05-18, worktree 66947, Mateo)**
 - **Evidence:** [scraper.py](../src/lead_scraper/scrapers/maps_serpapi/scraper.py) — single request, reads only the first page's `local_results`.
-- **Implication:** CRM "Generate Leads" caps at ~20 results per city+category click. Likely undersells the feature.
+- **Implication:** Caps at ~20 results per city+category call.
+- **Disposition: DEFER.** Phase 2 architecture (locked) routes the CRM hot path through a Deno edge function that the Python scraper feeds spec to — see [task_plan.md §2.2 line 163](task_plan.md): *"No pagination in v1. 250-search/month budget can't afford it. Single page only (max ~20 results)."* Adding pagination to the Python scraper now would:
+  1. Diverge the spec the Deno port is supposed to mirror. Phase 2 deliberately wants single-page.
+  2. Burn SerpAPI budget — each paginated page is a separate billed search against the 250/month plan (~8/day). The whole Phase 2 budget design (search cache, monthly guard, staging-first promote-without-search) exists to stretch single-page results, not multiply them.
+  3. Provide no value to the CRM (the only consumer post-Phase-2) because the edge function won't call this code path.
+- **CLI batch users:** still capped at ~20/city/category per run. Acceptable — batch users iterate over multiple cities/categories rather than paginate within one.
+- **Reopen if:** SerpAPI plan upgrades past 250/month AND CRM product decision is to surface >20 leads per click. Re-evaluating would also require revisiting Phase 2 §2.2 and the budget design.
 
-### D4: Stages aren't independent — `run_stage` re-scrapes
+### D4: Stages aren't independent — `run_stage` re-scrapes — **deferred (2026-05-18, worktree 66947, Mateo)**
 - **Evidence:** [tools/lead_tools.py:100,106,112](../agents/rgv_lead_scraper/tools/lead_tools.py) — `run_stage("score")` calls `_scrape` then `run_enrich` then `run_score`.
-- **Implication:** Calling `stage=score` repeatedly burns SerpAPI credits. Not safe to expose as-is to a CRM caller.
+- **Implication:** Calling `stage=score` repeatedly burns SerpAPI credits.
+- **Disposition: DEFER.** Phase 2.4b ([task_plan.md §2.4b "Agent-side changes" line 267](task_plan.md)) replaces both `run_pipeline` and `run_stage` agent tools with a single `request_lead_generation(city, category, limit)` that POSTs to the `generate-leads` edge function. After Phase 2:
+  1. The agent never calls `run_stage` — that tool is dropped from the agent surface entirely.
+  2. The edge function carries its own 14-day search cache + monthly budget guard ([task_plan.md §2.2 lines 156-159](task_plan.md)). Repeated re-scrape costs are mitigated where they actually matter (the CRM hot path).
+  3. `run_stage` survives only as a Python CLI debug tool. CLI users are aware of cost and don't pattern-repeat `stage=score` in quick succession.
+- **Schema impact:** none — defer requires no trace-artifact changes (escalation boundary check: clear).
+- **Reopen if:** the CLI grows non-debug callers that hit `run_stage` in tight loops, OR if Phase 2 architecture changes such that the agent or CRM calls back into `run_stage`. Either would warrant adding a between-stage cache (likely a pickled/JSONL intermediate under `out/trace/`).
 
 ### D5: `asyncio.run` inside a function tool may conflict with host loop — **fixed (2026-05-19, worktree e3588)**
 - **Original evidence:** [tools/lead_tools.py:69,70,97,100,103,106](../agents/rgv_lead_scraper/tools/lead_tools.py).

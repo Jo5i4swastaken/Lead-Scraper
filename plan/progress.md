@@ -320,3 +320,23 @@ Session log for the Lead-Scraper → CRM integration project.
 **Side effect to flag:** none — read-only work plus one new test file plus three doc edits. No SerpAPI cost. `out/leads.jsonl` untouched (baseline already preserved at [agents/rgv_lead_scraper/out/leads.pre_fix.jsonl](../agents/rgv_lead_scraper/out/leads.pre_fix.jsonl)).
 
 **Next actions (owned by whoever picks up 1.6):** drive D5 to formal closure (currently positive datapoints only); decide D3 / D4 fix-or-defer-with-rationale; promote the worktree b354b D1+D2 fixes to `main`. Once those land, flip the 1.6 row + unblock Phase 2.
+
+---
+
+## 2026-05-18 — Phase 1.2: D3 + D4 deferred (worktree 66947, Mateo)
+
+**Done:**
+- Re-read locked Phase 2 architecture for D3/D4 budget-vs-value analysis.
+- **D3 (no pagination): DEFER.** Phase 2 hot path is the Deno edge function, not the Python scraper. Phase 2.2 line 163 explicitly bakes in "No pagination in v1 — 250-search/month budget can't afford it." Adding pagination to the Python source now would diverge the spec the Deno port must mirror and contradict the budget-protection design (search cache + monthly guard + staging promote-without-search). CLI batch users keep the ~20/city/category cap; they iterate over (city, category) pairs rather than paginate.
+- **D4 (stage re-scrape): DEFER.** Phase 2.4b drops both `run_pipeline` and `run_stage` from the agent tool surface, replacing them with `request_lead_generation` (HTTP to the edge function). Edge function carries the 14-day cache + monthly budget guard, so re-scrape cost is mitigated where it matters. `run_stage` survives only as a Python CLI debug tool; cost-aware users won't loop on `stage=score`. No trace-artifact schema changes needed.
+- Both dispositions written into [findings.md](findings.md) D3+D4 entries with explicit reopen-criteria.
+- task_plan.md §1.2 D3 + D4 checkboxes flipped to `[x]` with deferral notes.
+
+**Decisions made:**
+- No code changes in this worktree. Phase 1.2 gate (D3/D4 either fixed or knowingly deferred with rationale) is satisfied by the documented deferrals.
+
+**Escalation check:** neither deferral hits a CTO escalation boundary. D3 defer preserves (does not invalidate) the 250/month budget assumption baked into Phase 2. D4 defer requires no trace-artifact schema changes.
+
+**Open questions:** none.
+
+**Errors encountered:** none.
