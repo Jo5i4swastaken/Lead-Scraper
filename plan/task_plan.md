@@ -164,54 +164,32 @@ Model after [ai-proxy/index.ts](../../WorkLogicly-CRM/supabase/functions/ai-prox
 
 **Task-tracking instruction:** When you finish any checkbox below, edit this file: flip `- [ ]` to `- [x]` and append a one-line note (date + worktree/commit + evidence path). When the whole section passes, update the matching row in the "Phase tracking" table at the bottom of this file.
 
-- [ ] `POST` body: `{ city: string, category: string, limit?: number, force_refresh?: boolean }`.
-- [ ] Auth chain:
-  - JWT verified by Supabase (default).
-  - Look up `profiles.role` for the caller. Reject 403 if not in `('system_admin','admin')`. Match pattern at [initial_schema.sql:146](../../WorkLogicly-CRM/supabase/migrations/20240523000000_initial_schema.sql).
-- [ ] Rate-limit check: count rows in `lead_generation_audit` for `user_id` in last 60s. Reject 429 if > N (configurable via `Deno.env.GENERATE_LEADS_PER_MIN`, **default 3**).
-- [ ] **Search cache check (budget critical):**
-  - Look up `lead_generation_audit` for `(lower(city), lower(category), serpapi_called=true)` in last 14 days.
-  - If found AND `force_refresh != true`: SKIP SerpAPI. Pull `limit` highest-scoring rows from `lead_candidates` matching this city+category that aren't already promoted. Promote those. Record audit row with `serpapi_called=false`.
-- [ ] **Monthly budget check:** count `lead_generation_audit` rows in current calendar month with `serpapi_called=true`. Reject 429 if ≥ soft threshold (default 230 of the 250-search plan). Surface "monthly SerpAPI budget nearly exhausted" message.
-- [ ] Read `SERPAPI_API_KEY` from `Deno.env`. Refuse cleanly if missing.
-- [ ] Build SerpAPI URL: `engine=google_maps`, `q="{category} in {city}, TX"`.
-- [ ] Retry/backoff on 408/425/429/500/502/503/504 — port algorithm from [scraper.py `_sleep_backoff`](../src/lead_scraper/scrapers/maps_serpapi/scraper.py). Max 5 attempts.
-- [ ] **No pagination in v1.** 250-search/month budget can't afford it. Single page only (max ~20 results).
-- [ ] Parse `local_results[]` → candidate row. Field map:
-  - `name` ← `title`
-  - `company` ← `title`
-  - `phone` ← `phone`
-  - `website` ← `website`
-  - `address` ← `address`
-  - `rating` ← `rating`
-  - `review_count` ← `reviews`
-  - `external_id` ← `"place_id:" + place_id` (apply D2 fix — never read `link`)
-  - `lead_score` ← `rating * 20 + min(reviews,500)/10` (match Python [scorers/simple.py](../src/lead_scraper/scorers/simple.py))
-  - `qualified` ← if Phase 1 fixed D1, port `LeadQualityScorer`; else null
-  - `tags` ← `[category, city]`
-  - `seen_in_search` ← `{ city, category, query, scraped_at: now }`
-  - `owner_id` ← from JWT
-  - `status` ← `'candidate'`
-- [ ] **Two-stage write (service-role client, bypasses RLS but we already validated admin):**
-  1. UPSERT all parsed rows into `public.lead_candidates` ON CONFLICT(external_id) DO UPDATE SET seen_in_search = ..., updated_at = now(). Returns the candidate ids.
-  2. Pick top `limit` candidates by `lead_score` (descending) from the result that aren't already `status='promoted'`.
-  3. UPSERT those into `public.leads` ON CONFLICT(external_id) DO NOTHING. Map fields: `source = "Google Maps (SerpAPI)"`, `status = "New"`, `value = 0`, `generated_from = { city, category, query, scraped_at, candidate_id }`.
-  4. UPDATE the promoted candidates: `status='promoted', promoted_lead_id = <new leads.id>`.
-- [ ] Append audit row.
-- [ ] Response: `{ requested, candidates_scraped, candidates_total, leads_promoted, duplicates, source: 'serpapi'|'cache', monthly_usage: {used, total} }`.
-- [ ] CORS headers — copy from ai-proxy.
+- [x] `POST` body: `{ city: string, category: string, limit?: number, force_refresh?: boolean }`. — 2026-05-21, worktree 9e765/branch phase/2.2-generate-leads-edge-function, [supabase/functions/generate-leads/index.ts](../../WorkLogicly-CRM/supabase/functions/generate-leads/index.ts):278-309.
+- [x] Auth chain (JWT + admin role gate). — 2026-05-21, ibid:230-265. `profiles.role in ('system_admin','admin')`; service-role client used for the lookup so RLS recursion is impossible.
+- [x] Rate-limit check (default 3 / 60s, env `GENERATE_LEADS_PER_MIN`). — 2026-05-21, ibid:311-330. Counts `lead_generation_audit` rows with `user_id` and `created_at >= now-60s`.
+- [x] Search cache check (14-day, env `GENERATE_LEADS_CACHE_DAYS`). — 2026-05-21, ibid:354-374. `serpapi_called=true` + `ilike` on city/category (matches the lower()-indexed search-cache idx without a separate fn call).
+- [x] Monthly budget check (soft 230 / hard 250, env `GENERATE_LEADS_SOFT_CAP` / `_HARD_CAP`). — 2026-05-21, ibid:332-352 + 376-388. Hard cap → 429 unconditionally. Soft cap → 429 only when the call would actually spend a search (cache hits stay free past 230).
+- [x] `SERPAPI_API_KEY` read from env, clean refusal if missing. — 2026-05-21, ibid:218-228. Verified live: POST without the key returns `{"error":"SERPAPI_API_KEY not configured on server"}`.
+- [x] SerpAPI URL build (`engine=google_maps`, `q="{category} in {city}, TX"`). — 2026-05-21, ibid:166-176.
+- [x] Retry/backoff port (408/425/429/500/502/503/504, max 5 attempts, base 0.8 / cap 20 / 2^(n-1) / 0.85–1.15 jitter). — 2026-05-21, ibid:139-148 + 166-198. Faithful port of [scraper.py `_sleep_backoff`](../src/lead_scraper/scrapers/maps_serpapi/scraper.py) (lines 112-118 + the `_serpapi_request` retry loop).
+- [x] No pagination in v1. — 2026-05-21, ibid: single `fetch` of `local_results`, no `start=` / `next_page_token` follow-up.
+- [x] Field map (name, company, phone, website, address, rating, review_count, **external_id ← `"place_id:" + place_id` — D2 fix, never reads `link`**, lead_score + qualified via ported **LeadQualityScorer** (D1 fix), tags=[category,city], seen_in_search, owner_id, status='candidate'). — 2026-05-21, ibid:151-164 (`scoreLead`) + 392-450 (per-item map). One spec deviation: `lead_score` uses LeadQualityScorer (matches the frozen output contract in [findings.md](findings.md) `lead_score 0.0–100.0 after D1 fix`), not the pre-D1 simple-scorer formula listed at line 189 of this file. Verified against the canonical sample at findings.md:122-159 — `no_website_listed`(25) + `low_reviews`(15) + `weak_presence`(20) = 60.0, matching exactly.
+- [x] Two-stage write (UPSERT candidates → pick top N by `lead_score` desc → UPSERT leads ON CONFLICT DO NOTHING → tag candidates as promoted). — 2026-05-21, ibid:453-572. `ignoreDuplicates: true` on the leads upsert + `.select("id, external_id")` lets us compute `duplicates = requested_subset - inserted`. Promotion tag is a per-row UPDATE keyed by candidate.id (Supabase JS upsert can't do conditional UPDATE WHERE; per-row update is the cheapest correct pattern given N ≤ 20).
+- [x] Append audit row (success and every failure path). — 2026-05-21, ibid: see calls to `writeAudit` at the end of every SerpAPI / upsert / pick error branch + the success path at 574-585. `serpapi_called` reflects whether the call actually spent the budget.
+- [x] Response shape `{ requested, candidates_scraped, candidates_total, leads_promoted, duplicates, source, monthly_usage }`. — 2026-05-21, ibid:587-600. `monthly_usage.used` is post-increment for fresh searches (`+1`) and unchanged for cache hits.
+- [x] CORS headers (copied from ai-proxy). — 2026-05-21, ibid:43-47. Verified live: OPTIONS preflight returns 200 with `access-control-allow-{origin,headers,methods}` set.
 
 ### 2.3 Client service — `lib/leadGenerationService.ts`
 
 **Task-tracking instruction:** When you finish any checkbox below, edit this file: flip `- [ ]` to `- [x]` and append a one-line note (date + worktree/commit + evidence path). When the whole section passes, update the matching row in the "Phase tracking" table at the bottom of this file.
 
-- [ ] `generateLeads({ city, category, limit, force_refresh? })` → invokes `generate-leads` edge function. Returns the full response shape from 2.2.
-- [ ] `promoteCandidate(candidate_id)` → calls a `promote-candidate` edge function (or RPC) that moves a single staged candidate into `leads` without spending a search. Free re-use of paid scrapes.
-- [ ] `dismissCandidate(candidate_id)` → sets `status='dismissed'` so it stops appearing in the staging review queue.
-- [ ] `fetchCandidates(filter)` → reads `lead_candidates` with optional filter `{ city?, category?, status? }`.
-- [ ] `subscribeToCandidates(...)` → realtime channel for `lead_candidates`, mirrors `subscribeToLeads` in [leadsService.ts:140](../../WorkLogicly-CRM/lib/leadsService.ts).
-- [ ] `fetchMonthlyBudget()` → reads from a tiny `lead-budget` edge function or directly from `lead_generation_audit`. Returns `{ used, total: 250 }`.
-- [ ] Friendly error messages: no key configured / SerpAPI down / rate-limited / monthly budget exhausted / not authorized.
+- [x] `generateLeads({ city, category, limit, force_refresh? })` → invokes `generate-leads` edge function. Returns the full response shape from 2.2. — 2026-05-21, worktree b59e2, [lib/leadGenerationService.ts:285](../../WorkLogicly-CRM/lib/leadGenerationService.ts). Uses `supabase.functions.invoke`, surfaces all P2.2 error codes via `mapEdgeError`.
+- [x] `promoteCandidate(candidate_id)` → calls a `promote-candidate` edge function (or RPC) that moves a single staged candidate into `leads` without spending a search. Free re-use of paid scrapes. — 2026-05-21, worktree b59e2. **Decision: Deno edge function, not Postgres RPC** (keeps P2.1 schema frozen; mirrors generate-leads auth pattern). [supabase/functions/promote-candidate/index.ts](../../WorkLogicly-CRM/supabase/functions/promote-candidate/index.ts) + [lib/leadGenerationService.ts:323](../../WorkLogicly-CRM/lib/leadGenerationService.ts).
+- [x] `dismissCandidate(candidate_id)` → sets `status='dismissed'` so it stops appearing in the staging review queue. — 2026-05-21, worktree b59e2. Direct UPDATE; admins have RLS UPDATE policy on `lead_candidates` (P2.1).
+- [x] `fetchCandidates(filter)` → reads `lead_candidates` with optional filter `{ city?, category?, status? }`. — 2026-05-21, worktree b59e2. Sorted by `lead_score desc nulls last, created_at desc`; city/category filters go through `seen_in_search->>` to hit `lead_candidates_search_idx`.
+- [x] `subscribeToCandidates(...)` → realtime channel for `lead_candidates`, mirrors `subscribeToLeads` in [leadsService.ts:170](../../WorkLogicly-CRM/lib/leadsService.ts). — 2026-05-21, worktree b59e2. Channel `lead-candidates-changes`, INSERT/UPDATE/DELETE handlers, returns unsubscribe.
+- [x] `fetchMonthlyBudget()` → reads from a tiny `lead-budget` edge function or directly from `lead_generation_audit`. Returns `{ used, total: 250 }`. — 2026-05-21, worktree b59e2. **Decision: direct SELECT, no extra edge function.** Counts `serpapi_called=true` rows in the current UTC month; admins have RLS SELECT.
+- [x] Friendly error messages: no key configured / SerpAPI down / rate-limited / monthly budget exhausted / not authorized. — 2026-05-21, worktree b59e2. Pure-function `mapEdgeError` with stable `LeadGenErrorCode` union; thrown as typed `LeadGenerationError`.
 
 ### 2.4a UI — Form surface (ships first)
 
@@ -219,27 +197,19 @@ In [LeadsView.tsx](../../WorkLogicly-CRM/components/LeadsView.tsx):
 
 **Task-tracking instruction:** When you finish any checkbox below, edit this file: flip `- [ ]` to `- [x]` and append a one-line note (date + worktree/commit + evidence path). When the whole section passes, update the matching row in the "Phase tracking" table at the bottom of this file.
 
-- [ ] **Admin gate at the button level.** Read `userRole` (already a prop, see [LeadsView.tsx:56](../../WorkLogicly-CRM/components/LeadsView.tsx)). Render button only if `userRole in ('system_admin','admin')`.
-- [ ] Add a second button next to "Register Lead" at [line 271](../../WorkLogicly-CRM/components/LeadsView.tsx). Same visual treatment, Sparkles icon from `lucide-react`, label "Generate Leads".
-- [ ] **Monthly budget badge** next to the button: "47 / 250 searches this month". Pulled from `fetchMonthlyBudget()` on mount. Goes amber at >180, red at >230, disables the button at >=250.
-- [ ] New modal mirroring the existing Register Lead modal (starts [line 464](../../WorkLogicly-CRM/components/LeadsView.tsx)). Fields:
-  - `city` — text input, default "McAllen". Future: typeahead from prior searches.
-  - `category` — select with config defaults (restaurants, salons, roofing, HVAC, …) + free-text fallback.
-  - `limit` — number, default 10, max 20.
-  - `force_refresh` — checkbox "Force fresh SerpAPI search (costs a search call even if we've seen this city+category recently)". Default off.
-  - Tooltip in the modal explains the cache: "If we searched this city+category in the last 14 days, we'll promote from staging instead of spending another search."
-- [ ] Submit handler `handleGenerateLeadsSubmit`:
-  - Disable button + spinner: "Searching … this can take 10–30s."
-  - On success: toast `"{leads_promoted} leads added, {candidates_total - leads_promoted} more in staging, {duplicates} already known"`. Source pill: "Fresh search" vs "From cache."
-  - On error: friendly toast. Full error to `console.error` only.
-- [ ] After insert, briefly filter the leads table to `source = "Google Maps (SerpAPI)"` so the user sees the result.
-- [ ] Micro-copy under the button: "Uses paid Google Maps API. Budget: 250 searches/month."
+- [x] **Admin gate at the button level.** Read `userRole` (already a prop, see [LeadsView.tsx:56](../../WorkLogicly-CRM/components/LeadsView.tsx)). Render button only if `userRole in ('system_admin','admin')`. — 2026-05-21, worktree 5ecd7, [LeadsView.tsx](../../WorkLogicly-CRM/components/LeadsView.tsx). `isAdminRole` helper + `isAdmin` flag gates the button, badge, tabs, and candidates panel.
+- [x] Add a second button next to "Register Lead" at [line 271](../../WorkLogicly-CRM/components/LeadsView.tsx). Same visual treatment, Sparkles icon from `lucide-react`, label "Generate Leads". — 2026-05-21, worktree 5ecd7. Sparkles icon in blue, same `rounded-lg` + shadow treatment as Register Lead.
+- [x] **Monthly budget badge** next to the button: "47 / 250 searches this month". Pulled from `fetchMonthlyBudget()` on mount. Goes amber at >180, red at >230, disables the button at >=250. — 2026-05-21, worktree 5ecd7. `budgetColorClass` tiered; `disabled={budgetExhausted}` on button.
+- [x] New modal mirroring the existing Register Lead modal (starts [line 464](../../WorkLogicly-CRM/components/LeadsView.tsx)). Fields: city / category (select + custom) / limit (1–20) / force_refresh checkbox. Inline 14-day cache explainer. — 2026-05-21, worktree 5ecd7. Same backdrop / `rounded-[2.5rem]` panel pattern; categories from `config/config.json`.
+- [x] Submit handler `handleGenerateLeadsSubmit`: spinner, success toast `"{leads_promoted} leads added, {candidates_total - leads_promoted} more in staging, {duplicates} already known — Fresh search/From cache."`, friendly error toast, `console.error` for raw. — 2026-05-21, worktree 5ecd7. Maps `LeadGenerationError.message` for friendly copy.
+- [x] After insert, briefly filter the leads table to `source = "Google Maps (SerpAPI)"` so the user sees the result. — 2026-05-21, worktree 5ecd7. `sourceFilter` state cleared after 8s; visible chip with X to clear manually.
+- [x] Micro-copy under the button: "Uses paid Google Maps API. Budget: 250 searches/month." — 2026-05-21, worktree 5ecd7. Rendered as uppercase 10px line under the button cluster.
 
 **Staging review tab/panel:**
-- [ ] New tab in LeadsView (or separate route): "Candidates ({n})". Lists rows from `lead_candidates` where `status='candidate'`.
-- [ ] Columns: name, category, city (from `seen_in_search`), rating, review_count, lead_score.
-- [ ] Row actions: "Promote to lead" → calls `promoteCandidate(id)`. "Dismiss" → calls `dismissCandidate(id)`. Both are free (no SerpAPI).
-- [ ] Filter chips by city+category. Sorted by lead_score desc.
+- [x] New tab in LeadsView (or separate route): "Candidates ({n})". Lists rows from `lead_candidates` where `status='candidate'`. — 2026-05-21, worktree 5ecd7. In-component tab switch alongside "Leads ({n})". `fetchCandidates({ status: 'candidate' })` on mount + realtime via `subscribeToCandidates`.
+- [x] Columns: name, category, city (from `seen_in_search`), rating, review_count, lead_score. — 2026-05-21, worktree 5ecd7. Plus right-aligned Actions column.
+- [x] Row actions: "Promote to lead" → calls `promoteCandidate(id)`. "Dismiss" → calls `dismissCandidate(id)`. Both are free (no SerpAPI). — 2026-05-21, worktree 5ecd7. Per-row spinner via `candidateActionId`.
+- [x] Filter chips by city+category. Sorted by lead_score desc. — 2026-05-21, worktree 5ecd7. Chips derived from observed candidates' `seen_in_search`; sort handled server-side by `fetchCandidates`.
 
 ### 2.4b UI — Chat surface (Copy Agent *logic* + custom WorkLogicly-CRM visuals)
 
@@ -252,49 +222,43 @@ In [LeadsView.tsx](../../WorkLogicly-CRM/components/LeadsView.tsx):
 **Task-tracking instruction:** When you finish any checkbox below, edit this file: flip `- [ ]` to `- [x]` and append a one-line note (date + worktree/commit + evidence path). When the whole section passes, update the matching row in the "Phase tracking" table at the bottom of this file.
 
 **Port (logic only — direct copies):**
-- [ ] `lib/agentRpc.ts` from [Copy Agent's agent-rpc.ts](../../Copy%20Agent/dashboard/src/lib/agent-rpc.ts). Pure JSON-RPC 2.0. No UI.
-- [ ] `hooks/useAgentWebSocket.ts` from [Copy Agent's useAgentWebSocket.ts](../../Copy%20Agent/dashboard/src/hooks/useAgentWebSocket.ts). Connection lifecycle, message state, tool activity, approval flow. No UI.
-- [ ] Rename env var: `VITE_AGENT_WS_URL` (default `ws://localhost:9494/ws`). Update `getWebSocketUrl` to read Vite env.
+- [x] `lib/agentRpc.ts` from Copy Agent's `agent-rpc.ts`. Pure JSON-RPC 2.0. No UI. — 2026-05-22, worktree ded04, CRM commit `1fc92cf`, [WorkLogicly-CRM/lib/agentRpc.ts](../../WorkLogicly-CRM/lib/agentRpc.ts). Parser extended to extract `params.function` discriminator on `client_request` (P1.4b finding).
+- [x] `hooks/useAgentWebSocket.ts` from Copy Agent's. Connection lifecycle, message state, tool activity, approval flow. No UI. — 2026-05-22, worktree ded04, CRM commit `1fc92cf`, [WorkLogicly-CRM/hooks/useAgentWebSocket.ts](../../WorkLogicly-CRM/hooks/useAgentWebSocket.ts). Lazy connect; client-side `alwaysApprove` Set re-sent per run; `ui.set_status` notifications ignored.
+- [x] Rename env var: `VITE_AGENT_WS_URL` (default `ws://localhost:9494/ws`). Update `getWebSocketUrl` to read Vite env. — 2026-05-22, [WorkLogicly-CRM/vite-env.d.ts](../../WorkLogicly-CRM/vite-env.d.ts) + agentRpc.ts.
 
 **Build fresh (visuals — match WorkLogicly-CRM theme):**
-- [ ] `components/agent-chat/AgentChatPanel.tsx` — **right-side drawer** (round-6 decision), matching the modal-overlay pattern at [LeadsView.tsx:464](../../WorkLogicly-CRM/components/LeadsView.tsx) (`fixed inset-0`, `bg-black/60 backdrop-blur-md`, slide-in-from-right). Drawer takes ~480–560px width on desktop, full width on mobile. Match CRM aesthetic: dark/light variants via `isDark` prop, `rounded-[2.5rem]` panels, `font-black uppercase tracking-widest` section headers, `bg-blue-600` accents, lucide-react icons. Reuse [components/ui/](../../WorkLogicly-CRM/components/ui/) primitives.
-- [ ] **Persist state across navigation** (round-6 decision). Lift the agent chat state (messages, connection, session id, approval mode) into either:
-  - A new top-level provider `AgentChatProvider` wrapping the app under [App.tsx](../../WorkLogicly-CRM/App.tsx); OR
-  - Direct state in [App.tsx](../../WorkLogicly-CRM/App.tsx) passed through to whichever view mounts the drawer.
-  Either way: WebSocket connection survives route changes; messages survive close-and-reopen of the drawer; only an explicit "End chat" / "New chat" action clears state.
-- [ ] `ChatMessages.tsx` — message list. User messages right-aligned, agent left-aligned. Streaming tokens render character-by-character. Inline status rows for tool events (see Tool Trace below).
-- [ ] `ChatInput.tsx` — text area + Send button. Disable while `isRunning`. Match the Register Lead modal's input styling at [LeadsView.tsx:464](../../WorkLogicly-CRM/components/LeadsView.tsx).
-- [ ] `ToolTraceRow.tsx` — the agent-trace UI (see below). Replaces what Copy Agent calls `ToolActivity`.
-- [ ] `ToolApprovalCard.tsx` — Approve / Deny / Approve-always for the single gated tool (`request_lead_generation`). Shows city, category, limit, "1 SerpAPI search will be used (free if cached)".
+- [x] `components/agent-chat/AgentChatPanel.tsx` — right-side drawer (`fixed inset-0` overlay, slide-in-from-right, 480px sm / 560px lg, CRM theme via `isDark`). — 2026-05-22, [WorkLogicly-CRM/components/agent-chat/AgentChatPanel.tsx](../../WorkLogicly-CRM/components/agent-chat/AgentChatPanel.tsx).
+- [x] Persist state across navigation via `AgentChatProvider` in [lib/AgentChatContext.tsx](../../WorkLogicly-CRM/lib/AgentChatContext.tsx). Mounted at index.tsx; panel mounted at App level in all three authenticated branches (main layout, Messages, Proposal Preview). "New chat" disconnects + reconnects to start a fresh OmniAgents session. — 2026-05-22, CRM commit `1fc92cf`.
+- [x] `ChatMessages.tsx` — user right-aligned, assistant left, system rows for tool traces and approval cards inset under the agent gutter. Auto-scrolls. Empty state copy. — 2026-05-22, [WorkLogicly-CRM/components/agent-chat/ChatMessages.tsx](../../WorkLogicly-CRM/components/agent-chat/ChatMessages.tsx).
+- [x] `ChatInput.tsx` — autosizing textarea + Send. Enter sends, Shift+Enter newline. Disabled while running. — 2026-05-22, [WorkLogicly-CRM/components/agent-chat/ChatInput.tsx](../../WorkLogicly-CRM/components/agent-chat/ChatInput.tsx).
+- [x] `ToolTraceRow.tsx` — human-language progress / result / error for `request_lead_generation`. — 2026-05-22, [WorkLogicly-CRM/components/agent-chat/ToolTraceRow.tsx](../../WorkLogicly-CRM/components/agent-chat/ToolTraceRow.tsx).
+- [x] `ToolApprovalCard.tsx` — Approve / Always approve / Deny for `request_lead_generation` with city/category/limit + SerpAPI cost note. — 2026-05-22, [WorkLogicly-CRM/components/agent-chat/ToolApprovalCard.tsx](../../WorkLogicly-CRM/components/agent-chat/ToolApprovalCard.tsx).
 
 **Tool-trace rendering (round-5 decision — agent trace UX):**
-- [ ] On `tool_called` event from the WebSocket: insert a `ToolTraceRow` into the chat at the agent's position with state `in_progress`. Copy: `Searching leads: <category> in <city> (limit <N>)…` with a spinner. Show the actual args, in human language. Don't dump raw JSON.
-- [ ] On `tool_result`: update the same row to state `complete`. Copy: `Searched leads: <category> in <city> → <candidates_total> candidates, <leads_promoted> promoted, <duplicates> already known.` Cache-hit case: `Reused recent search (no SerpAPI cost): <leads_promoted> promoted from staging`.
-- [ ] On `tool_result` with error: state `error`, red. Copy: `Couldn't search: <error message>`.
-- [ ] Stream agent assistant text from `message_output` events between/after tool rows so the conversation reads naturally.
+- [x] On `tool_called`: insert `ToolTraceRow` with `in_progress`. Copy: `Searching leads: <category> in <city> (limit <N>)…`. — 2026-05-22, ToolTraceRow.tsx `describeProgress` + hook handler.
+- [x] On `tool_result`: update to `complete`. Cache hit / fresh search copy implemented from edge function envelope `source` field. — 2026-05-22, ToolTraceRow.tsx `describeComplete` parses `{candidates_total, leads_promoted, duplicates, source}`.
+- [x] On `tool_result` error: state `error`, red. Copy `Couldn't run <tool>: <error>`. — 2026-05-22, ToolTraceRow `palette` selects rose-* when `is_error`.
+- [x] Stream agent assistant text from `message_output` between/after tool rows. — 2026-05-22, hook's `lastAssistantIdRef` accumulates per-run and resets after each tool event so post-tool text starts a fresh message.
 
 **Approval policy (round-5 decision — gate only SerpAPI tools):**
-- [ ] Configure [agent.yml](../agents/rgv_lead_scraper/agent.yml) so all read-only / non-SerpAPI tools are in `safe_tool_names` (auto-approve). Only `request_lead_generation` is gated.
-- [ ] When `client_request` fires for `request_lead_generation`, render `ToolApprovalCard` inline in the chat alongside the `ToolTraceRow` (which shows what the agent is about to do in plain English). User sees both: "the agent is about to do X" and "Approve / Deny / Always-approve".
-- [ ] If user clicks Always-approve, send `client_response { approved: true, always_approve: true }` and the in-session toggle stays on. No more popups for `request_lead_generation` this session.
+- [x] [agent.yml](../agents/rgv_lead_scraper/agent.yml) `safe_tool_names = [get_settings_summary, read_file, list_directory]`; `request_lead_generation` intentionally excluded. — 2026-05-22, this commit.
+- [x] On `client_request` for `request_lead_generation` render `ToolApprovalCard` inline. — 2026-05-22, hook routes only `function === 'ui.request_tool_approval'`; messages list shows the card.
+- [x] Always-approve sends `{approved: true, always_approve: true}` AND remembers the tool name in `alwaysApprove: Set<string>` for the session. — 2026-05-22, [useAgentWebSocket.ts](../../WorkLogicly-CRM/hooks/useAgentWebSocket.ts). Required because server-side `always_approve` is run-scoped (P1.4b).
 
 **Mounting / gating:**
-- [ ] Render the chat panel toggle button on the Leads page only when `userRole in ('system_admin','admin')`. Same gate as the Generate Leads form button.
-- [ ] Connection state banner: "Not connected to agent — start the local agent and refresh" when WS is down. Friendly, with a "Retry" button that calls `connect()`.
-- [ ] Budget badge inside the chat header (same data source as 2.4a).
-- [ ] After a successful generation, realtime push surfaces the new candidates/leads in the underlying Leads table behind the chat panel. No manual refetch.
+- [x] "Chat with agent" button on Leads page gated on `isAdminRole(userRole)`. — 2026-05-22, [components/LeadsView.tsx](../../WorkLogicly-CRM/components/LeadsView.tsx).
+- [x] Disconnected banner with the `omniagents run` command + Retry button. — 2026-05-22, AgentChatPanel.tsx.
+- [x] Budget badge in chat header reading from `fetchMonthlyBudget` (same source as P2.4a). Auto-refreshes after each `request_lead_generation` tool_result. — 2026-05-22, [lib/AgentChatContext.tsx](../../WorkLogicly-CRM/lib/AgentChatContext.tsx).
+- [ ] Realtime push surfaces new candidates/leads in the underlying Leads table behind the drawer. — Implementation supports this (P2.4a `subscribeToCandidates` already mounted on LeadsView; realtime `leads` channel from initial schema); LIVE verification deferred to P2.6.
 
 **Agent-side changes (in this repo, [agents/rgv_lead_scraper/](../agents/rgv_lead_scraper/)):**
 
-- [ ] **Replace `run_pipeline` tool with `request_lead_generation(city, category, limit)`** in [tools/lead_tools.py](../agents/rgv_lead_scraper/tools/lead_tools.py). It no longer touches SerpAPI directly. Instead it:
-  - Reads `CRM_BASE_URL` + admin JWT (`CRM_USER_JWT`) from env. The JWT comes from a local config the admin writes when they log into the CRM (or pasted into a `.env` once).
-  - POSTs to `${CRM_BASE_URL}/functions/v1/generate-leads` with `Authorization: Bearer ${CRM_USER_JWT}` and body `{ city, category, limit }`.
-  - Returns `{ leads_promoted, candidates_total, source, monthly_usage, … }` to the agent loop.
-- [ ] **`safe_tool_names`:** include `get_settings_summary`, `read_file`, `list_directory`, and any future read-only helpers. Exclude `request_lead_generation` so it goes through `client_request` approval.
-- [ ] **Permissions guarantee:** the agent has exactly one mutating tool (`request_lead_generation`), and that tool's only effect is upsert-on-conflict-ignore into `leads` + `lead_candidates` via the edge function. The agent therefore physically **cannot UPDATE or DELETE** leads — there's no tool that can. This is the round-5 permission rule, enforced by tool surface (not RLS).
-- [ ] **Update [instructions.md](../agents/rgv_lead_scraper/instructions.md):** one mutating tool, conversational style, ask clarifying questions for vague prompts ("HVAC leads" → "Which city?"), explicitly state the agent cannot edit or remove existing leads.
-- [ ] Keep the local Python CLI (`lead-scraper run`) working for non-CRM batch use — unchanged.
-- [ ] **WebSocket invocation:** confirm the exact `omniagents` command that exposes WebSocket on `:9494` (check Copy Agent's launch instructions or omniagents docs). Document in [agents/rgv_lead_scraper/instructions.md](../agents/rgv_lead_scraper/instructions.md) or a new README.
+- [x] Replace `run_pipeline` with `request_lead_generation(city, category, limit)`. — 2026-05-22, [tools/lead_tools.py](../agents/rgv_lead_scraper/tools/lead_tools.py). Reads `CRM_BASE_URL` + `CRM_USER_JWT` from env; POSTs to `{base}/functions/v1/generate-leads`; clamps `limit` to 1–20; returns the edge function envelope unchanged.
+- [x] `safe_tool_names`: `[get_settings_summary, read_file, list_directory]`. `request_lead_generation` excluded → gated. — 2026-05-22, agent.yml.
+- [x] Permissions guarantee: agent now has exactly one mutating tool (`request_lead_generation`). `run_pipeline` and `run_stage` removed from the tool surface entirely. — 2026-05-22, tools/lead_tools.py + agent.yml.
+- [x] instructions.md rewritten — one mutating tool, conversational, ask clarifying questions, explicit "I cannot edit or delete existing leads" rule, never echo JWT. — 2026-05-22, [instructions.md](../agents/rgv_lead_scraper/instructions.md).
+- [x] Local Python CLI (`lead-scraper run`) untouched. — 2026-05-22, no changes to `src/lead_scraper/cli/`. Note: the CLI uses `SerpApiGoogleMapsScraper` directly; tools/lead_tools.py no longer imports any pipeline modules, but the CLI imports are unaffected.
+- [x] WebSocket invocation documented. — 2026-05-22, [agents/rgv_lead_scraper/README.md](../agents/rgv_lead_scraper/README.md). Includes `PYTHONPATH=src` fix and env-var contract for `CRM_BASE_URL` / `CRM_USER_JWT`.
 
 **Out of scope for v1 (noted but not built):**
 - Token budget per chat session.
@@ -392,9 +356,9 @@ No `chat-with-agent` proxy needed (browser talks WS directly to the local agent)
 | 1.6 Phase 1 gate | ✅ complete (2026-05-19) | all of 1.1–1.5 |
 | 2.1 Schema migration | unblocked | leads extended; lead_candidates + audit tables created; types updated |
 | 2.2 Edge function | unblocked | generate-leads deployed; admin gate + cache + budget + 2-stage write |
-| 2.3 Client service | unblocked | `generateLeads/promote/dismiss/fetchBudget` wrappers |
-| 2.4a UI form | unblocked | admin-gated button + form + budget badge + admin-only staging tab |
-| 2.4b UI chat | unblocked | port logic from Copy Agent; build visuals fresh in CRM theme; tool-trace UX; only SerpAPI tool gated |
+| 2.3 Client service | ✅ complete (2026-05-21) | `lib/leadGenerationService.ts` + `supabase/functions/promote-candidate/` shipped (Emilio, worktree b59e2); typecheck passes |
+| 2.4a UI form | ✅ complete (2026-05-21) | admin-gated button + form + budget badge + admin-only staging tab — Salvador, worktree 5ecd7, [components/LeadsView.tsx](../../WorkLogicly-CRM/components/LeadsView.tsx); `tsc --noEmit` + `vite build` pass |
+| 2.4b UI chat | ✅ complete (2026-05-22) | Mauricio, worktree ded04. CRM commit `1fc92cf` (chat drawer + provider + ported logic). Lead-Scraper: `request_lead_generation` tool replaces run_pipeline; agent.yml + instructions.md + README updated. `tsc --noEmit` + `vite build` pass. Live integration test deferred to P2.6. |
 | ~~2.4c Agent service~~ | unblocked | replaced by local-WebSocket pattern |
 | ~~2.4d Edge functions for chat~~ | unblocked | not needed — browser talks WS direct |
 | 2.5 Safety | unblocked | admin gate (3 layers) + per-click cap + rate-limit + monthly budget + cache + flag |

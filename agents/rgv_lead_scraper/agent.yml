@@ -1,16 +1,18 @@
 name: RGV Lead Scraper
 model: gpt-5.2
-welcome_text: "RGV lead scraping agent ready. What city/category should we target?"
+welcome_text: "Lead-scraper agent ready. Which city and category should we search?"
 instructions_file: instructions.md
 context: build_skills_context
 tools:
-  - run_pipeline
-  - run_stage
+  - request_lead_generation
   - get_settings_summary
   - read_file
   - list_directory
 use_safe_agent: true
 safe_agent_options:
+  # Everything in this list auto-approves transparently. request_lead_generation
+  # is intentionally EXCLUDED — it consumes a SerpAPI search (or a cached one)
+  # and writes to the CRM, so each call goes through ui.request_tool_approval.
   safe_tool_names:
     - get_settings_summary
     - read_file

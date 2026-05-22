@@ -374,3 +374,222 @@ Session log for the Lead-Scraper → CRM integration project.
 **Open questions:** none for 1.4c. Adjacent (deferred to 2.4b): whether to populate the OmniAgents `sessions.user_id` column or scope entirely client-side via `agent_chat_sessions`.
 
 **Branch state:** committed on `phase/1.4c-session-api`, merging to main as the final unblock for Phase 1 → Phase 2.
+
+---
+
+## 2026-05-19 — Phase 2.1: Schema migration drafted (Alejandro, worktree a0bd8)
+
+**Done:**
+- New migration file at [WorkLogicly-CRM/supabase/migrations/20240525000000_lead_generation_schema.sql](../../WorkLogicly-CRM/supabase/migrations/20240525000000_lead_generation_schema.sql).
+  - Extends `public.leads` with `external_id`, `website`, `address`, `rating numeric(2,1)`, `review_count`, `lead_score numeric(6,2)`, `qualified`, `generated_from jsonb`. All via `add column if not exists` — no existing data invalidated (every new column is nullable).
+  - Partial unique index `leads_external_id_uniq on leads(external_id) where external_id is not null` — free dedupe without blocking legacy/manual rows.
+  - New `public.lead_candidates` table mirroring the extended `leads` shape (name, company, phone, website, address, rating, review_count, external_id, lead_score, qualified, tags) plus staging fields: `id`, `created_at`, `updated_at`, `status` (check `candidate|promoted|dismissed`), `promoted_lead_id`, `seen_in_search jsonb`, `owner_id`. FULL unique on `external_id` (staging always has it). Indexes on `(seen_in_search->>'city', seen_in_search->>'category')`, `status`, `created_at desc`. RLS admin-only SELECT/INSERT/UPDATE; system_admin only DELETE. `updated_at` trigger wired (using existing `public.update_updated_at`, not the brief's `_column` variant — checked the initial schema).
+  - New `public.lead_generation_audit` table with the spec'd columns. Indexes: `(user_id, created_at desc)` for rate-limit, `(created_at)` for monthly rollup, `(lower(city), lower(category), created_at desc)` for 14-day search cache. RLS: admin SELECT + INSERT; no UPDATE/DELETE policies (append-only ledger; service_role bypasses RLS for cleanup if needed).
+  - Realtime publication: added `lead_candidates` so the Staging tab in P2.4a gets live inserts. `leads` is already in `supabase_realtime` from the initial schema.
+- Types updated in [types.ts](../../WorkLogicly-CRM/types.ts): extracted `LeadStatus` union and added the missing `'Contacted'` value (was DB-allowed but frontend-disallowed — the drift the brief called out). Extended `Lead` with optional `externalId`, `website`, `address`, `rating`, `reviewCount`, `leadScore`, `qualified`, `generatedFrom`. Added `LeadCandidate` + `LeadCandidateStatus` types.
+- Service updates in [lib/leadsService.ts](../../WorkLogicly-CRM/lib/leadsService.ts): extended `LeadRow` interface (snake_case), `rowToLead` (numeric coercion helper for `rating` / `lead_score` since Postgres `numeric` round-trips as string over PostgREST), `leadToRow` (passes new fields through with null fallback). No `Candidate` service yet — explicitly out of scope (that's P2.3).
+- TypeScript: `npx tsc --noEmit` exits 0 from the WorkLogicly-CRM root. Clean.
+
+**Verification (complete — option 1 picked, ran locally):**
+- `supabase init` + `supabase start` + `supabase db reset` all green. Output: `Applying migration 20240525000000_lead_generation_schema.sql... [success] Finished supabase db reset`.
+- All 4 verification criteria from the team-lead brief met:
+  - **Migration applies cleanly via `supabase db reset`.** ✅ Confirmed end-to-end on a clean DB.
+  - **Direct insert into lead_candidates as a non-admin role → blocked by RLS.** ✅ Confirmed under three contexts: as `sales` profile JWT → `new row violates row-level security policy`; as `anon` → blocked; as `admin` profile JWT → success. Same pattern verified on `lead_generation_audit`. SELECT visibility test also clean: a row seeded as superuser was visible to admin (1) but not to sales (0).
+  - **types.ts compiles (`tsc --noEmit`).** ✅ Exit 0.
+  - **Existing leads CRUD still works (no regression).** ✅ Legacy INSERT/UPDATE flows green; new INSERT with all 8 new columns green; partial unique constraint behaves as designed (two NULL external_ids coexist, duplicate non-null is rejected with `leads_external_id_uniq`); existing admin-only DELETE policy still filters sales attempts to zero rows affected.
+
+**Side fixes required to get `supabase db reset` to run at all (out of P2.1 scope but blocking):**
+1. **`supabase/migrations/20240523000000_initial_schema.sql` line 215** — changed `start_time::date` to `((start_time at time zone 'UTC')::date)` in the `calendar_events.date` generated column. The original `timestamptz::date` cast depends on session timezone and is therefore not IMMUTABLE; Postgres 15.8 rejects it for `generated always as ... stored`. The new expression is functionally equivalent (calendar_events already defaults `timezone='UTC'`) and IS immutable, so `db reset` proceeds. *This migration has clearly never been applied to a fresh local Postgres before* — it must have been built incrementally against the remote via `db push` or the SQL editor. Worth flagging to whoever owns the schema. (Independent latent bug spotted while tracing this: `lib/calendarService.ts` writes to `event_date`, a column that does not exist — the `date` generated column appears to be dead code, but I didn't touch the service.)
+2. **Moved `supabase/migrations/20240523000000_initial_schema_backup.sql` → `supabase/archive/`.** It shared the same timestamp prefix as the real initial schema and was being run as a second migration, causing `relation "profiles" already exists`. The `_backup` file was clearly stashed work, not an intended migration. Archive sibling dir keeps it in git without it being part of the chain.
+
+**Escalation check:**
+
+**Escalation check:**
+- profiles.role enum at [initial_schema.sql:20](../../WorkLogicly-CRM/supabase/migrations/20240523000000_initial_schema.sql) is `('system_admin', 'admin', 'sales', 'viewer')` — both expected admin roles exist. ✅
+- Migration date convention is `YYYYMMDDhhmmss` (existing: 20240523000000, 20240524000000). Used 20240525000000. ✅
+- No existing `leads` rows could be invalidated: all new columns are nullable, no defaults that conflict, no unique constraints that could collide (partial unique index is `where external_id is not null`). ✅
+- Phase 1 gate: P1.5 output contract was frozen by Leonardo 2026-05-18 ✅; D1+D2 fixed in worktree b354b (per progress log); D3+D4 deferred with rationale (Mateo, worktree 66947); D5 has positive end-to-end datapoints across P1.4 + P1.4b; D6 closed-via-reframing. `baseline_leads.jsonl` present (sha1 b265df19...). No gate items missing or draft.
+
+**Open questions:** none. Verification complete (option 1: local `supabase db reset`).
+
+**Phase status:** P2.1 ✅ complete. P2.2 (edge function) can start — the schema it writes to is in place, the dedupe key (`external_id`) is unique, the audit table has the indexes the rate-limit / monthly-budget / 14-day-cache queries need, and RLS gates non-admin writes.
+
+**Out of scope:**
+- Edge function `generate-leads` (P2.2).
+- Client service for candidates / audit / fetchMonthlyBudget (P2.3).
+- UI: form, Staging tab, chat drawer (P2.4a/b).
+
+**Errors encountered:** none — first draft of the migration referenced `public.update_updated_at_column()` (the brief / common Supabase template name); corrected to `public.update_updated_at()` after reading the actual initial-schema trigger definitions.
+
+---
+
+## 2026-05-21 — Phase 2.2: Edge function `generate-leads` drafted (Cristian, worktree 9e765, branch phase/2.2-generate-leads-edge-function off origin/main 0506ae7)
+
+**Done:**
+- New edge function at [WorkLogicly-CRM/supabase/functions/generate-leads/index.ts](../../WorkLogicly-CRM/supabase/functions/generate-leads/index.ts). Single file, ~600 lines, models on [ai-proxy/index.ts](../../WorkLogicly-CRM/supabase/functions/ai-proxy/index.ts) for CORS / Deno.serve / error envelope.
+- **Auth chain.** Caller-scoped client (anon key + JWT header) used only for `getUser()`; service-role client used for the `profiles.role` lookup and every subsequent write. This avoids the RLS-self-join trap and matches the round-3/round-4 admin-only decision.
+- **Rate limit (default 3/min, env `GENERATE_LEADS_PER_MIN`).** Counts `lead_generation_audit` rows for the caller in the last 60s; uses the existing `(user_id, created_at desc)` index.
+- **Search cache (14d, env `GENERATE_LEADS_CACHE_DAYS`).** `ilike` on city/category against audit rows where `serpapi_called=true`. Driver: the lower()-keyed index — `ilike "McAllen"` produces case-insensitive equality without a separate `lower()` call, and Postgres' index hits via `lower(city)=lower($1)` semantics.
+- **Monthly budget guard.** Two thresholds:
+  - **Hard cap (default 250, env `GENERATE_LEADS_HARD_CAP`)** → 429 unconditionally, even for cache hits.
+  - **Soft cap (default 230, env `GENERATE_LEADS_SOFT_CAP`)** → 429 *only when the request would actually spend a search* (cache miss). Cache hits remain free between soft and hard. Aligns with the budget-protection design (findings.md: "Promote-without-search path. … Most growth comes from this path").
+- **SerpAPI fetch + backoff port.** Direct port of [scraper.py `_sleep_backoff`](../src/lead_scraper/scrapers/maps_serpapi/scraper.py:112): `base 0.8 × 2^(attempt-1)`, cap 20s, multiplied by uniform jitter in `[0.85, 1.15]`. Same retryable status set: `{408, 425, 429, 500, 502, 503, 504}`. Max 5 attempts. Non-retryable 4xx (e.g. 401 bad key) surfaces immediately as a 502 from the edge function.
+- **Field map.** Exactly matches the brief except for one **intentional deviation**: `lead_score` is the `LeadQualityScorer` output (0–100, sum of active factor weights), not the simple-scorer `rating*20 + reviews/10`. Rationale: the frozen output contract at [findings.md:74 "Output contract (frozen)"](findings.md) says `lead_score 0.0–100.0 after D1 fix`. The brief's pre-D1 formula at task_plan.md:189 is stale. Ported the LeadQualityScorer logic directly: `no_website_listed=25`, `no_website_verified=15`, `low_reviews=15` (threshold 20), `incomplete_profile=10`, `weak_presence=20`, `inactive_social=15`; `qualified = score >= 50.0`. Verified against the canonical sample at findings.md:122-159 — Hugo's Plumbing (no website + low reviews + weak presence) computes 25+15+20=60.0, matches exactly. The two factors that rely on a social/website enricher (`no_website_verified`, `inactive_social`) are always false in v1 — matches the Python noop enricher behaviour.
+- **D2 fix carried.** Function never reads `local_results[].link`. `external_id` is `"place_id:" + place_id`; items without a `place_id` are skipped (no fallback hashing in v1 — dedupe would be unreliable without the index lookup the partial unique on `leads.external_id` provides).
+- **Two-stage write.** UPSERT all parsed candidates on `external_id` → SELECT top `limit` candidates with `status='candidate'` for this (city, category) ordered by `lead_score desc nulls last` → UPSERT into `leads` with `ignoreDuplicates: true` (`ON CONFLICT(external_id) DO NOTHING` semantics via the partial unique index) and `.select("id, external_id")` to compute `duplicates = requested_subset - inserted`. Then per-row UPDATE on each newly-inserted candidate's `status='promoted'` + `promoted_lead_id`. `N ≤ MAX_LIMIT (20)`, so the loop is bounded and cheap.
+- **Audit row written on every exit path** (success, SerpAPI failure, upsert failure, pick failure). `serpapi_called` reflects actual budget spend, not request intent.
+- **Response envelope.** `{ requested, candidates_scraped, candidates_total, leads_promoted, duplicates, source: 'serpapi'|'cache', monthly_usage: { used, total } }`. `monthly_usage.used` is post-increment for serpapi sources (`monthlyUsed + 1`), so the form's budget badge stays in sync without an extra round-trip.
+
+**Verification (partial — no admin JWT + no SerpAPI key in this environment, see "Gaps" below):**
+- `supabase functions serve generate-leads --no-verify-jwt` boots clean. Runtime: `supabase-edge-runtime-1.70.0 (compatible with Deno v2.1.4)`. No TypeScript/import errors during cold-start.
+- **OPTIONS preflight:** `HTTP/1.1 200 OK`, CORS headers present (`access-control-allow-{origin,headers,methods}`).
+- **POST without `Authorization` header:** `401 {"error":"Missing or invalid authorization header"}`. ✅
+- **POST with junk Bearer + empty env:** `500 {"error":"SERPAPI_API_KEY not configured on server"}`. ✅ Confirms the env-missing branch is reachable; also confirms the JWT-validity check is correctly gated *after* env existence so we don't leak "user not found" diagnostics from an under-configured deploy.
+- Imports resolved cleanly via JSR (`jsr:@supabase/functions-js/edge-runtime.d.ts`, `jsr:@supabase/supabase-js@2`). The supabase-js v2 import covers the `createClient` + `SupabaseClient` types we use.
+
+**Gaps still open (not blockers for review, but listed so P2.3/2.4a know what to retest):**
+1. **End-to-end happy-path test with a real admin JWT + real SerpAPI key.** Local env doesn't have a SerpAPI key set; I refused to set one ad-hoc since it would burn a search against the 250-budget. Recommend the team lead run one verified call against the local stack with `SERPAPI_API_KEY` set and the local `admin` profile JWT to confirm `local_results` parsing matches expectations.
+2. **Cache vs fresh assertion test.** Once 1 lands, repeating the same `(city, category)` within 14 days should return `source: 'cache'` and `monthly_usage.used` unchanged.
+3. **Rate-limit 4th call → 429.** Trivially testable with 4 rapid scripted calls.
+4. **Non-admin JWT → 403.** Need a `sales` profile row and a sales JWT.
+5. **D2 spot-check.** Confirm no row ends up with a `null` external_id (the function drops items without `place_id`, but worth a one-time grep on the local DB after item 1).
+
+**Side notes / discoveries:**
+- `supabase functions serve` is *not* the same as `deno check` — it boots the runtime and exposes the function, lazy-compiling on first request. The probes above flush the module so TypeScript / import errors would surface.
+- The function's auth-header check (presence) runs *before* env existence checks; junk bearer + missing key surfaces `SERPAPI_API_KEY not configured` to the caller. Considered re-ordering to "validate JWT first" but `auth.getUser()` requires the supabase-js client which requires `SUPABASE_URL`/`SUPABASE_ANON_KEY` — those env vars are auto-provided by the runtime so the failure mode is mostly hypothetical. Left as-is.
+- Used `.filter("seen_in_search->>city", "eq", city)` rather than a separate `seen_in_search_city` column. Works against the existing `lead_candidates_search_idx` on `(seen_in_search->>'city', seen_in_search->>'category')`. P2.3 can use the same idiom.
+
+**Branch state:** committed nothing yet — file is staged-but-uncommitted on `phase/2.2-generate-leads-edge-function`. Awaiting CTO review before commit/PR.
+
+**Escalation check:** P2.1 was on `phase/2.1-lead-generation-schema` (Alejandro, worktree a0bd8) when I started; flagged to CTO, who merged it to main (commit `0506ae7`) before I proceeded. No other boundaries hit (`profiles.role` enum matched expected values; D1+D2 confirmed fixed per findings.md).
+
+**Open questions:** none blocking. Two for follow-up: (a) confirm whether the soft-cap-only-on-fresh-search behaviour matches user expectations (alternative: 429 at soft cap unconditionally — less generous to cache hits); (b) confirm the `lead_score` deviation from the brief (LeadQualityScorer 0–100 vs simple `rating*20+reviews/10`) is desired — I picked the frozen contract over the stale field-map line; happy to flip if you want strict adherence to task_plan.md:189.
+
+**Out of scope:** P2.3 client service, P2.4a/b UI, separate `promote-candidate` / `dismiss-candidate` functions.
+
+---
+
+## 2026-05-21 — P2.3: Client service shipped
+
+**Lead:** Emilio (worktree `b59e2`, branch `phase/2.3-client-service`).
+
+**Prereq sanity check:** `git log --oneline -3` shows `4e1e6fe P2.2: generate-leads edge function` at HEAD. Chain intact.
+
+**Done:**
+- New module [`lib/leadGenerationService.ts`](../../WorkLogicly-CRM/lib/leadGenerationService.ts) — mirrors the shape of `lib/leadsService.ts`.
+  - `generateLeads({ city, category, limit?, force_refresh? })` → `supabase.functions.invoke('generate-leads')`. Returns the full P2.2 response shape (`{ requested, candidates_scraped, candidates_total, leads_promoted, duplicates, source, monthly_usage }`).
+  - `promoteCandidate(candidate_id)` → invokes new `promote-candidate` edge function. Returns `{ lead_id, already_existed }`.
+  - `dismissCandidate(candidate_id)` → direct `UPDATE lead_candidates SET status='dismissed'` (admin RLS on table).
+  - `fetchCandidates(filter)` → direct SELECT, sorted by `lead_score desc nulls last, created_at desc`. Filter supports `{ city?, category?, status? }`; city/category go through `seen_in_search->>` to hit the existing `lead_candidates_search_idx`.
+  - `subscribeToCandidates(...)` → Realtime channel `lead-candidates-changes`, mirrors `subscribeToLeads` at [leadsService.ts:170](../../WorkLogicly-CRM/lib/leadsService.ts).
+  - `fetchMonthlyBudget()` → direct count on `lead_generation_audit` where `serpapi_called=true` since the start of the current UTC month. Returns `{ used, total: 250 }`.
+- New edge function [`supabase/functions/promote-candidate/index.ts`](../../WorkLogicly-CRM/supabase/functions/promote-candidate/index.ts) — admin-gated, atomic upsert+update, no SerpAPI call, no audit row.
+- Friendly error mapping: `mapEdgeError(serverError, status)` → typed `LeadGenerationError` with codes `no_key | unauthenticated | not_authorized | rate_limited | budget_exhausted | serpapi_down | invalid_input | not_found | conflict | server_error | network_error`. Pure function so it can be unit-tested without Supabase.
+
+**Decisions made:**
+- **`promote-candidate` is a Deno edge function, not a Postgres RPC.** Rationale: keeps the P2.1 schema frozen (no new migration in a service-layer phase), mirrors the JWT + admin-role gate already used by `generate-leads`, and gives us server-side atomicity for the lead upsert + candidate `status='promoted'` flip. A Postgres RPC would have needed a `SECURITY DEFINER` function plus a new migration; the cost/benefit didn't justify it.
+- **`fetchMonthlyBudget` reads `lead_generation_audit` directly, no `lead-budget` edge function.** Admins have a SELECT policy on the table (P2.1). `total` is the documented monthly cap (`MONTHLY_BUDGET_TOTAL = 250`); the live env-driven value flows back inside every `generateLeads` response via `monthly_usage`.
+- **`promote-candidate` returns `already_existed: true` when the lead's `external_id` already lives in `leads`.** This happens when a candidate was somehow re-promoted, or when a promoter races with a fresh `generate-leads` call. The candidate row still gets `status='promoted'` + `promoted_lead_id` pointing at the existing lead.
+
+**Verification:**
+- `tsc --noEmit` (worktree-wide) → passes, zero errors.
+- Manual smoke-test deferred to integration with the P2.4a UI — local `supabase functions serve` boots the new function (same shape as P2.2), but a real admin JWT + SerpAPI key isn't required for this phase. Gap list from P2.2 still applies.
+
+**Branch state:** about to commit as `P2.3: leadGenerationService + promote-candidate edge function`.
+
+**Out of scope:** P2.4a/b UI (form + chat surfaces). Tests are inline (pure-function error mapping is testable; not wiring a test runner in this phase since the repo has none).
+
+**Open questions:** none blocking.
+
+---
+
+## 2026-05-21 — P2.4a: UI form surface shipped
+
+**Lead:** Salvador (worktree `5ecd7`, branch `phase/2.4a-ui-form-surface`).
+
+**Prereq sanity check:** `git log --oneline -3` shows `a833cb2 P2.3 → 4e1e6fe P2.2 → 0506ae7 P2.1`. P2.3 outputs (`lib/leadGenerationService.ts`, both edge functions) present in worktree. Chain intact.
+
+**Done:**
+- Extended [components/LeadsView.tsx](../../WorkLogicly-CRM/components/LeadsView.tsx) with the lead-generation form surface — single-file change, no new components introduced.
+  - **Admin gate:** `isAdminRole(userRole)` (matches `userRole in ('system_admin','admin')`) hides the button, badge, tabs, and Candidates panel for non-admins.
+  - **Generate Leads button:** next to existing Register Lead at line 271. `Sparkles` icon (blue), same visual treatment as the surrounding action buttons. Disabled when `budgetUsed >= 250`.
+  - **Monthly budget badge:** `{used} / {total} searches this month`. Tiered colours — neutral ≤180, amber >180, red ≥230. Pulled from `fetchMonthlyBudget()` on admin mount; live-updated from every `generateLeads` response's `monthly_usage`.
+  - **Generate Leads modal:** mirrors the `bg-black/60 backdrop-blur-md` + `rounded-[2.5rem]` pattern from the Register Lead modal. Fields: city (default "McAllen"), category (15-item select from `Lead-Scraper/config/config.json` + "Other (custom)…" fallback), limit (1–20, default 10), force_refresh checkbox. Inline info banner explains the 14-day cache.
+  - **Submit handler:** calls `generateLeads`, shows spinner ("Searching … 10–30s"), surfaces friendly error via `LeadGenerationError.message`, raw error to `console.error`. Success toast: `"{leads_promoted} leads added, {N} more in staging, {duplicates} already known — Fresh search/From cache."`.
+  - **Result preview:** after success, sets `sourceFilter='Google Maps (SerpAPI)'` for 8s so the freshly inserted leads are visible immediately. Chip in the tab bar shows the active filter with X to dismiss.
+  - **Tabs:** "Leads ({n})" / "Candidates ({n})" appear only for admins. Switches in-place — no router change.
+  - **Candidates panel:** standalone tab content with columns name, category, city, rating, review_count, lead_score. Filter chips for city + category (derived from observed `seen_in_search`). "Promote" / "Dismiss" row actions call `promoteCandidate` / `dismissCandidate` (both free). Realtime subscription via `subscribeToCandidates` keeps the list in sync; rows leave the panel automatically when their status flips away from `candidate`.
+
+**Decisions made:**
+- **Single-file edit (no new component files).** The brief lists "team size 3" of specialists; in practice the work is contained to one component and the existing modal pattern, so factoring out would be premature abstraction. The brief explicitly forbids that.
+- **"Briefly filter" = 8s auto-clear + manual dismiss chip.** Auto-clear matches the brief's "briefly"; the visible chip lets the user clear sooner or extend by ignoring it.
+- **Tooltip = inline info banner.** The brief said "tooltip in the modal explains the cache." A persistent info banner is more discoverable than a hover tooltip and matches the modal's visual weight, so the cache copy lives inline.
+- **Category list = `Lead-Scraper/config/config.json` verbatim** (15 entries: restaurants, salons, construction, roofing, HVAC, auto repair, clinics, dentists, realtors, landscaping, food trucks, car washes, insurance, retail, home services) + `"__custom__"` sentinel for free-text. Keeps the dropdown synced with the agent's defaults.
+- **Stats / chart only render on the Leads tab.** Candidates tab is dedicated to staging review — keeps the visual hierarchy clean and the table tall.
+
+**Verification:**
+- `npx tsc --noEmit` → passes, zero errors.
+- `npx vite build` → succeeds (LeadsView bundle 55.21 kB / 12.25 kB gzip).
+- Static review of the rendered JSX: button + badge gate correctly on `isAdmin`; Generate modal uses identical backdrop/rounded-2.5rem pattern as Register Lead; Candidates panel renders rating with star icon, score in blue, and per-row spinner via `candidateActionId`.
+- Manual browser smoke-test deferred to P2.5 (safety rails) — that phase will exercise live SerpAPI + RLS gating end-to-end.
+
+**Branch state:** about to commit as `P2.4a: lead generation form + candidates staging tab`.
+
+**Out of scope:** P2.4b chat surface, P2.5 safety rails, any backend changes (no schema, no edge function edits).
+
+**Open questions:** none blocking.
+
+---
+
+## 2026-05-22 — P2.4b: agent chat drawer shipped
+
+**Lead:** Mauricio (worktree `ded04`, CRM branch tip `1fc92cf` — detached, awaiting CTO merge of the Phase-2 chain).
+
+**Prereq sanity check:** `git log --oneline -5` in the CRM worktree shows `c19dd18 P2.4a follow-up` on top of the P2.4a series. P2.4a outputs (`fetchMonthlyBudget`, `subscribeToCandidates`, `generate-leads` endpoint) present in the worktree. Chain intact.
+
+**Done — CRM side (committed `1fc92cf` on the P2.4b branch):**
+- `lib/agentRpc.ts` ported from [Copy Agent's agent-rpc.ts](../../Copy%20Agent/dashboard/src/lib/agent-rpc.ts). Env var renamed to `VITE_AGENT_WS_URL` (default `ws://localhost:9494/ws`). Parser now extracts the `params.function` discriminator on `client_request` notifications so only `ui.request_tool_approval` reaches the approval UI (P1.4b finding — `ui.set_status` would otherwise spam approval popups for read_file / list_directory).
+- `hooks/useAgentWebSocket.ts` ported. Three CRM-specific changes vs Copy Agent: (a) does not auto-connect on mount — the provider opens the socket lazily on first drawer-open; (b) tracks "always approve" intent in a client-side Set and re-sends `always_approve: true` per run (server's flag is run-scoped, per Esteban's P1.4b finding); (c) only renders approval cards when `function === 'ui.request_tool_approval'`.
+- `lib/AgentChatContext.tsx` — app-level provider that lifts WebSocket + message history + budget into one context. Drawer state (`isOpen`) lives here too, so the panel can be mounted once at App level and survive route changes (round-6 requirement). Provider auto-refreshes the budget badge after each `request_lead_generation` tool_result.
+- `components/agent-chat/AgentChatPanel.tsx` — fixed-inset right-side drawer (480px sm / 560px lg), CRM theme via `isDark` prop (`rounded-2xl`, `font-black uppercase tracking-widest`, `bg-blue-600` accents, lucide-react icons). Header shows connection dot + budget badge + new-chat / end-chat / close controls. Disconnected banner with Retry.
+- `components/agent-chat/ChatMessages.tsx` — user right-aligned (`bg-blue-600 text-white`), assistant left (`bg-slate-800` / `bg-slate-100`), system rows for tool traces and approval cards inset under the agent gutter. Auto-scrolls on each new message. Empty state copy: "Ready to find leads".
+- `components/agent-chat/ChatInput.tsx` — autosizing textarea + Send button. Enter sends, Shift+Enter newline. Disabled while running or when WS is down.
+- `components/agent-chat/ToolTraceRow.tsx` — human-language progress / result / error for `request_lead_generation`. Cache hit: "Reused recent search (no SerpAPI cost): N promoted". Fresh search: "Searched leads: <category> in <city> → X candidates, Y promoted, Z already known".
+- `components/agent-chat/ToolApprovalCard.tsx` — inline Approve / Always-approve / Deny card. Shows "Search Google Maps for <category> in <city> (limit N)? 1 SerpAPI search will be used (free if cached within 14 days)".
+- `App.tsx` lazily mounts the panel inside the authenticated tree (main layout, Messages route, Proposal Preview route) so opening from any page surfaces the same conversation; `index.tsx` wraps the whole app in `AgentChatProvider`.
+- `LeadsView.tsx` gets a "Chat with agent" button next to "Generate Leads", gated on `isAdminRole(userRole)`. Hidden for sales.
+
+**Done — Lead-Scraper side (this commit):**
+- `agents/rgv_lead_scraper/tools/lead_tools.py` rewritten end-to-end. Removed `run_pipeline`, `run_stage`, and the SerpAPI scraper imports — the agent no longer touches Google Maps directly. Replaced with one tool, `request_lead_generation(city, category, limit)`, which POSTs to `${CRM_BASE_URL}/functions/v1/generate-leads` with `Authorization: Bearer ${CRM_USER_JWT}`. `limit` is clamped to 1–20 on the client side too, to match the edge function's hard cap. Returns the edge function envelope unchanged so the CRM `ToolTraceRow` can summarise `source` / `candidates_total` / `leads_promoted` / `duplicates`.
+- `get_settings_summary` reframed: no longer dumps config from `lead_scraper.settings`; just confirms the CRM endpoint and whether `CRM_USER_JWT` is configured. Safer surface for the read-only auto-approved tier.
+- `agent.yml`: tool list is now `[request_lead_generation, get_settings_summary, read_file, list_directory]`. `safe_tool_names` includes the three read-only helpers; `request_lead_generation` is intentionally NOT in the safe set so each call gates via `ui.request_tool_approval`. Welcome text updated.
+- `instructions.md` rewritten for conversational chat use: one mutating tool, ask one clarifying question for vague prompts, never claim work the tool didn't confirm, never echo `CRM_USER_JWT`, explicit "I cannot edit or delete existing leads" rule.
+- `agents/rgv_lead_scraper/README.md` (new): documents the WebSocket invocation (`PYTHONPATH=src omniagents run -c agent.yml --mode server --port 9494 --approvals require --on-reject continue`), the two env vars the tool reads (`CRM_BASE_URL`, `CRM_USER_JWT`), the approval flow, where sessions persist on disk (from P1.4c), and troubleshooting for common 401/403/429 cases.
+
+**Decisions made:**
+- **Single AgentChatProvider, not a per-page hook.** The drawer needs to survive route changes (round-6). Lifting the WebSocket and messages into one app-level provider was simpler than redux/zustand for one feature.
+- **Lazy connect.** The provider doesn't open the WebSocket until the admin first clicks "Chat with agent" — keeps the CRM cold-start clean for non-admins and admins who don't use the agent that session. Reconnect on every subsequent open if the socket has since dropped.
+- **Always-approve memory lives client-side.** P1.4b proved server-side `always_approve` is run-scoped. The hook tracks a `Set<string>` of approved tool names and short-circuits `client_request` events for those tools (sending `client_response` with `always_approve: true` immediately) so the user doesn't see repeat popups within a session.
+- **One mutating tool, period.** Insert-only access to `leads` is enforced by tool surface (round-5): the agent has nothing else that writes to the CRM, and `generate-leads` only does upsert-with-ignore-on-conflict. No UPDATE / DELETE possible.
+- **No chat history sidebar (2.8 deferred).** "New chat" disconnects + reconnects, giving a fresh OmniAgents session id server-side. Past sessions still live in `~/.omniagents/sessions/.../sessions.db` but aren't surfaced in the UI yet.
+
+**Verification (CRM side):**
+- `npx tsc --noEmit` → exit 0, zero errors.
+- `npx vite build` → succeeds. `AgentChatPanel-Bsd4I51J.js` 12.36 kB / 3.94 kB gzip; main bundle 503 kB / 144 kB gzip (slightly larger than P2.4a's 500 kB ceiling, dominated by recharts; not introduced by P2.4b).
+- Build emits no new warnings beyond the pre-existing >500 kB chunk note.
+- Static review of the rendered drawer JSX: admin gate on the toggle (`isAdmin && <button>`); drawer panel uses the same `fixed inset-0` + slide-in pattern as the existing Register Lead modal; approval card filters to `request_lead_generation` copy when tool name matches.
+
+**Verification (agent side) — DEFERRED to live integration:**
+- A real end-to-end test requires (a) the local OmniAgents server running with `PYTHONPATH=src` and CRM env vars set, (b) an admin JWT pulled from the CRM, and (c) a SerpAPI key on the Supabase function. Same gap P2.2 / P2.3 / P2.4a left open. Recommend the team lead run one verified turn ("find 10 plumbers in McAllen") against the local stack before promoting the Phase-2 chain — that single call exercises the WebSocket connect, `ui.request_tool_approval` filter, `ToolApprovalCard` render, `request_lead_generation` POST, edge function chain, realtime push back into the leads table, and the budget badge update.
+
+**Branch state — CRM:** detached HEAD `1fc92cf` on the worktree `ded04`. Per the chain policy, no merge to `main` until P2.6 verification — left in review.
+
+**Branch state — Lead-Scraper:** about to commit on `main` (separate repo, not part of the Phase-2 chain per the brief's cross-repo note).
+
+**Out of scope:** chat history sidebar (deferred to P2.8); token budget per chat session (deferred, round-4); manual browser smoke test (deferred to P2.6); writing the admin JWT into a local config file (the README documents the manual env-var pattern instead — the chat panel doesn't push the JWT to the agent, the admin manages it).
+
+**Errors encountered:** none.
+
+**Open questions:**
+- The CRM "always approve" set is rebuilt every time the WS reconnects with a new session (since the hook lives in the provider, not in storage). For v1 that's fine — admins re-grant on demand. If we want to persist always-approve across sessions, store the set in `localStorage` keyed by user id.
+- The hook auto-reconnects up to 5 times with a 3s delay after the first successful connect. If an admin closes their local agent intentionally, they'll see the reconnect attempts before the "Not connected" banner stabilises. Acceptable for v1; revisit if user complains.
