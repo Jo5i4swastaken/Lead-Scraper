@@ -593,3 +593,25 @@ Session log for the Lead-Scraper → CRM integration project.
 **Open questions:**
 - The CRM "always approve" set is rebuilt every time the WS reconnects with a new session (since the hook lives in the provider, not in storage). For v1 that's fine — admins re-grant on demand. If we want to persist always-approve across sessions, store the set in `localStorage` keyed by user id.
 - The hook auto-reconnects up to 5 times with a 3s delay after the first successful connect. If an admin closes their local agent intentionally, they'll see the reconnect attempts before the "Not connected" banner stabilises. Acceptable for v1; revisit if user complains.
+
+---
+
+## 2026-05-25 — Phase 3 plan added (filter-predicate direct promote)
+
+**Trigger:** Live test of the list→promote agent flow crashed OmniAgents on gpt-5.2 with `function_call without reasoning` 400 (full diagnosis in [findings.md "Phase 3 trigger"](findings.md)). Sessions.db wipe is only a single-turn workaround. The two-mutating-tool agent surface (`list_lead_candidates` + `promote_lead_candidates`) is structurally incompatible with OmniAgents' current session compaction + Azure gpt-5.2 strict validation.
+
+**Decision (user-driven, 2026-05-25):** Extend `request_lead_generation` with a filter predicate. Rows that match ALL filter terms go straight into `public.leads`; non-matching rows still stage into `lead_candidates` so the SerpAPI spend isn't wasted. Drop `promote_lead_candidates` from the agent surface entirely. Single-mutating-tool agent ⇒ no cross-turn function_call reload ⇒ bug can't trigger.
+
+**Files updated:**
+- [task_plan.md](task_plan.md) — added Phase 3 with §3.1 (vocabulary), §3.2 (edge function), §3.3 (agent simplification), §3.4 (form filters), §3.5 (verification, incl. load-bearing 5×back-to-back bug-recur regression), §3.6 (gate), §3.7 (open questions). New rows in the Phase tracking table.
+- [findings.md](findings.md) — added "Phase 3 trigger" entry: symptom, log excerpt, root cause, why the workaround fails, the architectural escape.
+
+**Open (needs user sign-off before 3.2 starts):**
+- §3.1 filter vocabulary: proposed initial set is `no_website`, `min_rating`, `min_reviews`, `max_reviews`, `qualified` with AND-only combination. Confirm or expand.
+- Whether to keep `list_lead_candidates` on the agent (recommended yes — read-only, single-turn, useful for reviewing staged leftovers).
+
+**Aside:** The user kept hitting `command not found: worklogicly-agent` — the CLI isn't on PATH. It lives at `/Users/josias/Desktop/CODE/Lead-Scraper/.venv/bin/worklogicly-agent`. Either invoke that full path or `source` the venv before running `worklogicly-agent login`.
+
+**Next actions:**
+1. Confirm §3.1 vocabulary with user.
+2. Once approved, open a new worktree against WorkLogicly-CRM for §3.2 (edge function) — keeps Lead-Scraper changes (§3.3) in this repo as a separate chain.

@@ -342,6 +342,102 @@ No `chat-with-agent` proxy needed (browser talks WS directly to the local agent)
 
 ---
 
+## Phase 3 — Filter-Predicate Direct Promote (eliminates two-tool agent flow)
+
+**Status:** `not_started`
+**Trigger:** Live multi-turn `list → promote` flow crashes OmniAgents on gpt-5.2 with `function_call without reasoning` (session compaction strips `reasoning` items but keeps paired `function_call` items; Azure gpt-5.2 strict-mode rejects the malformed input). Wiping `~/.omniagents/sessions/default/rgv_lead_scraper/sessions.db` is a single-turn workaround, not a fix. See [findings.md "Phase 3 trigger"](findings.md).
+
+**Goal:** Let the user (form or agent) declare a filter predicate at scrape time. Rows that match ALL filter terms go straight into `public.leads`; non-matching rows still land in `public.lead_candidates` for manual review. This collapses the agent's mutating surface to **one** tool (`request_lead_generation`), eliminating the cross-turn function-call sequence that triggers the bug.
+
+**Non-goal:** Drop `lead_candidates` entirely. The 250/mo SerpAPI budget is the binding constraint (per [P2 architecture](#phase-2--worklogicly-crm-wiring-unblocked)). Non-matching scraped rows must still persist for free re-use.
+
+### 3.1 Filter-predicate vocabulary (locked before any code)
+
+**Task-tracking instruction:** When you finish any checkbox below, edit this file: flip `- [ ]` to `- [x]` and append a one-line note (date + worktree/commit + evidence path). When the whole section passes, update the matching row in the "Phase tracking" table at the bottom of this file.
+
+- [ ] Decide the filter terms supported in v1. Recommended initial set:
+  - `no_website: bool` — true ⇒ `website` is NULL or empty
+  - `min_rating: number` — inclusive lower bound on `rating`
+  - `min_reviews: int` — inclusive lower bound on `review_count`
+  - `max_reviews: int` — inclusive upper bound on `review_count`
+  - `qualified: bool` — passes `LeadQualityScorer.qualified` (D1)
+- [ ] Lock combination semantics: ALL terms must match (logical AND). No `OR`, no nesting in v1.
+- [ ] Define validation at the edge function boundary: unknown keys → `400` with the list of allowed keys.
+- [ ] Document the vocabulary in `plan/filter-vocabulary.md` so the agent's `instructions.md` and the form UI consume the same source of truth.
+
+### 3.2 Edge function — extend `generate-leads`
+
+In [WorkLogicly-CRM/supabase/functions/generate-leads/index.ts](../../WorkLogicly-CRM/supabase/functions/generate-leads/index.ts):
+
+**Task-tracking instruction:** When you finish any checkbox below, edit this file: flip `- [ ]` to `- [x]` and append a one-line note (date + worktree/commit + evidence path). When the whole section passes, update the matching row in the "Phase tracking" table at the bottom of this file.
+
+- [ ] Extend POST body: add optional `filters: { no_website?, min_rating?, min_reviews?, max_reviews?, qualified? }`. Absent ⇒ current behavior unchanged.
+- [ ] After the existing scrape + score step (P2.2 line 177), build a pure `matchesFilters(row, filters)` predicate.
+- [ ] When `filters` present, partition scraped results into `matching` and `non_matching`:
+  - **Matching rows** → UPSERT directly into `public.leads` (ON CONFLICT DO NOTHING on `external_id`). Bypass the candidates-then-promote dance entirely.
+  - **Non-matching rows** → UPSERT into `public.lead_candidates` as today.
+- [ ] `limit` semantics when `filters` is supplied: cap the number of matching rows auto-promoted (default 10, hard max 20). Excess matching rows fall back into `lead_candidates` so the SerpAPI spend isn't wasted.
+- [ ] Extend `leads.generated_from` jsonb to include `matched_filters: {...}` — the row records *why* it was auto-promoted.
+- [ ] Add `filters jsonb` column to `lead_generation_audit` (nullable for backward compat). New migration file in [WorkLogicly-CRM/supabase/migrations/](../../WorkLogicly-CRM/supabase/migrations/).
+- [ ] Extend response envelope: `auto_promoted_via_filter: int`, `staged: int`, `filter_matches: int`. Kept distinct from existing `leads_promoted` so the no-filter "top-N" path stays unambiguous.
+
+### 3.3 Agent-side simplification (the bug-trigger path goes away)
+
+In [agents/rgv_lead_scraper/](../agents/rgv_lead_scraper/):
+
+**Task-tracking instruction:** When you finish any checkbox below, edit this file: flip `- [ ]` to `- [x]` and append a one-line note (date + worktree/commit + evidence path). When the whole section passes, update the matching row in the "Phase tracking" table at the bottom of this file.
+
+- [ ] Extend `request_lead_generation` signature: `request_lead_generation(city, category, limit, filters?)`. Pass `filters` through verbatim to the edge function.
+- [ ] **Remove** `promote_lead_candidates` from `agent.yml` tool list. The agent loses the ability to promote (intentional — that's the bug's surface).
+- [ ] **Keep** `list_lead_candidates` (read-only, in `safe_tool_names`, single-turn, doesn't trigger the bug).
+- [ ] Update `instructions.md`:
+  - New canonical flow: parse user intent → choose filter predicate → single `request_lead_generation` call → report `auto_promoted_via_filter` + `staged` counts.
+  - Remove all multi-turn promote guidance.
+  - Add filter vocabulary section (copy from `plan/filter-vocabulary.md`).
+- [ ] Delete `promote_lead_candidates` from [tools/lead_tools.py](../agents/rgv_lead_scraper/tools/lead_tools.py) once nothing else references it.
+
+### 3.4 Form UI — filter inputs
+
+In [WorkLogicly-CRM/components/LeadsView.tsx](../../WorkLogicly-CRM/components/LeadsView.tsx) Generate Leads modal:
+
+**Task-tracking instruction:** When you finish any checkbox below, edit this file: flip `- [ ]` to `- [x]` and append a one-line note (date + worktree/commit + evidence path). When the whole section passes, update the matching row in the "Phase tracking" table at the bottom of this file.
+
+- [ ] Add a "Filters (auto-promote matching only)" collapsible section. Inputs match 3.1 vocabulary. Default collapsed so the existing no-filter flow stays one click.
+- [ ] When filters are non-empty, change submit button copy from "Generate Leads" to "Generate & Auto-Promote".
+- [ ] Success toast adapts: `"{auto_promoted_via_filter} matched & added to leads, {staged} more in staging."`
+- [ ] No change to existing no-filter behavior — admins can still do top-N-by-score.
+
+### 3.5 Verification
+
+**Task-tracking instruction:** When you finish any checkbox below, edit this file: flip `- [ ]` to `- [x]` and append a one-line note (date + worktree/commit + evidence path). When the whole section passes, update the matching row in the "Phase tracking" table at the bottom of this file.
+
+- [ ] **Filter happy path (form):** city=McAllen, category=plumbers, `filters={no_website: true, min_rating: 4.5}`. Confirm:
+  - Rows with empty website AND rating ≥ 4.5 → `public.leads`, with `generated_from.matched_filters` set.
+  - All other rows → `public.lead_candidates` with `status='candidate'`.
+  - Audit row records the `filters` payload + `auto_promoted_via_filter` count.
+- [ ] **Filter via agent:** "find 5 McAllen plumbers with no website" → agent emits exactly one `request_lead_generation(city='McAllen', category='plumbers', limit=5, filters={no_website: true})`. Single tool call, single turn. No `promote_*` follow-up.
+- [ ] **Bug-recur regression (load-bearing):** run the above agent flow back-to-back **5 times** in the same chat session. Confirm `/tmp/agent-server.log` shows zero `function_call without reasoning` 400s.
+- [ ] **No-filter regression:** form submit without filters behaves exactly like P2 (top-N by score, candidates staged). Diff `lead_generation_audit` row against a P2 baseline.
+- [ ] **Dedupe:** auto-promoted row already exists in `public.leads` → ON CONFLICT DO NOTHING; audit row's `duplicates` count increments; no error.
+- [ ] **Unknown filter key:** POST with `{filters: {snake_oil: true}}` → 400, allowed keys listed in error body.
+- [ ] **Empty match set:** filters too strict, zero matches → all rows go to staging; audit `auto_promoted_via_filter=0`; response envelope well-formed; toast says "0 matched, N staged".
+
+### 3.6 Phase 3 acceptance gate
+
+- [ ] All 3.5 checks pass.
+- [ ] `promote_lead_candidates` removed from `agent.yml` AND from [tools/lead_tools.py](../agents/rgv_lead_scraper/tools/lead_tools.py).
+- [ ] No code path in `agents/rgv_lead_scraper/` issues two CRM **mutating** tool calls in sequence.
+- [ ] `findings.md` updated with the architecture-shift rationale (already done — see "Phase 3 trigger").
+- [ ] Tracking row updated in "Phase tracking" table at the bottom of this file.
+
+### 3.7 Open questions
+
+- [ ] If the user later wants `OR` semantics or grouped filters, do we extend 3.1's vocabulary or build a separate `query` mini-language? Defer until v1 proves filters are actually used.
+- [ ] Should `lead_candidates` auto-purge when its rows age past 14 days (matches the search cache TTL)? Currently they accumulate indefinitely.
+- [ ] **Upstream OmniAgents bug** — file separately. Phase 3 routes around it; the fix is still needed for any future multi-mutating-tool design. Symptom + repro live in `findings.md` "Phase 3 trigger".
+
+---
+
 ## Phase tracking
 
 | Phase | Status | Acceptance gate |
@@ -363,3 +459,9 @@ No `chat-with-agent` proxy needed (browser talks WS directly to the local agent)
 | ~~2.4d Edge functions for chat~~ | unblocked | not needed — browser talks WS direct |
 | 2.5 Safety | unblocked | admin gate (3 layers) + per-click cap + rate-limit + monthly budget + cache + flag |
 | 2.6 Verification | unblocked | all 11 checks pass in local Supabase |
+| 3.1 Filter vocabulary | not_started | vocabulary locked in `plan/filter-vocabulary.md`; combination semantics AND; unknown-key validation defined |
+| 3.2 Edge function | not_started | `generate-leads` accepts `filters`; matching rows → `leads` direct; non-matching → `lead_candidates`; audit + response envelope extended |
+| 3.3 Agent simplification | not_started | `request_lead_generation` accepts `filters`; `promote_lead_candidates` removed from agent.yml + tools/lead_tools.py; instructions.md rewritten |
+| 3.4 Form filter UI | not_started | collapsible filters section in Generate Leads modal; submit copy adapts; success toast adapts |
+| 3.5 Verification | not_started | 7 checks incl. load-bearing bug-recur regression (5× back-to-back agent calls, zero 400s in server log) |
+| 3.6 Phase 3 gate | not_started | all of 3.1–3.5; single mutating tool surface; findings.md + tracking row updated |
