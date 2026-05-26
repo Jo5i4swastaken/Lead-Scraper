@@ -562,3 +562,24 @@ D6 in task_plan.md §1.2 was originally framed as a defect ("safe_tool_names exc
 - **Resolution path:** [task_plan.md Phase 3](task_plan.md) — extend `request_lead_generation` with a filter predicate so matching rows auto-promote into `public.leads`. `promote_lead_candidates` is removed from the agent surface.
 - **Upstream bug:** to be filed separately against OmniAgents (`omniagents/core/agents/service.py` session compaction). Phase 3 routes around it but any future multi-mutating-tool design will hit it again until upstream is fixed.
 - **Stacked-bug clarification (2026-05-25 user observation):** Two bugs were active on the same flow, which obscured diagnosis. Bug #1 is the OmniAgents `function_call without reasoning` 400 above. Bug #2 is that [agents/rgv_lead_scraper/instructions.md](../agents/rgv_lead_scraper/instructions.md):9 still says "You have **exactly one** tool that changes CRM data: `request_lead_generation`" — written 2026-05-22 in P2.4b. When the 2026-05-25 candidate-selection session added `list_lead_candidates` + `promote_lead_candidates` to `agent.yml` + `tools/lead_tools.py`, `instructions.md` was not updated. The agent sees both tools in its registry but its system prompt forbids using `promote_lead_candidates`, so it refuses (no error, just a polite "I can't"). Either bug alone would have blocked the list→promote flow. Phase 3 resolves both: §3.3 deletes `promote_lead_candidates` outright (matching what `instructions.md` already promises), and the filter-predicate path in §3.2 means promotion happens server-side without any second tool call.
+
+## P2.6 static audit (2026-05-26, Tomás, worktree db3a1)
+
+Detail in [p26_static_audit.md](p26_static_audit.md). Headline:
+
+- **Chain integrity:** PASS — all 10 phase commits present and clean.
+- **13 PASS / 1 FAIL (blocker) / 6 PARTIAL** across 4 independent subagent reviews (code-reviewer × 3, security-engineer × 1).
+- **Blocker — cross-city `seen_in_search` overwrite** at `WorkLogicly-CRM/supabase/functions/generate-leads/index.ts:619-625`. PostgREST default upsert overwrites the jsonb sidecar on conflict; same business surfaced in two cities loses the first observation. P2.6 check 13 will fail. Owner: Cristian (P2.2).
+- **Recommendation:** do NOT flip `enable_lead_generation=true`, do NOT merge to `main`. Open `P2.5c` hotfix: migration to model `seen_in_search` as a jsonb array + server-side append via RPC + update pick filter to use `@>` containment.
+- **Live verification bundle prepped** at `WorkLogicly-CRM/scripts/p26_verification/` — README, curl/SQL scripts, and a 13-row checklist. CTO will execute interactively after P2.5c lands.
+
+Other findings (PARTIAL — none blocking, all documented in p26_static_audit.md):
+- 503 body lacks machine-readable `code:"feature_disabled"` (client already maps OK).
+- Cache `ilike` may not use the `lower()` functional index at scale — non-issue at 250/month budget.
+- `LeadQualityScorer.weak_presence` clause may diverge from Python source — needs one-shot diff against `src/lead_scraper/scorers/lead_quality.py`.
+- Dismissed candidates have no UI affordance to view. No "resets on the 1st" text on hard-capped state. Soft-warning at ≥230 is color-only.
+
+Other risks (works but fragile):
+- Hard-cap check at `generate-leads/index.ts:491` runs before cache lookup — cache hits past hard cap incorrectly 429 (code/comment disagree).
+- `writeAudit` swallows insert errors — silent counter drift.
+- `findCacheHit` doesn't sanitize `%`/`_` in ilike predicate.

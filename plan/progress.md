@@ -652,3 +652,72 @@ Session log for the Lead-Scraper → CRM integration project.
 **Branch state:** about to commit as `P2.5: safety-rails audit + feature flag` on the worktree's branch. No merge to main per chain policy.
 
 **Open questions:** none.
+
+---
+
+## 2026-05-26 — Phase 2.6: Static audit complete, BLOCKER found (Tomás, worktree db3a1)
+
+**Mode:** Static-only sweep per CTO direction. CTO will execute live interactive verification (checks 1-13) using the prepped bundle at `WorkLogicly-CRM/scripts/p26_verification/`. Per the same direction, findings escalate to CTO before any production code change — no inline fixes from this phase.
+
+**Done:**
+- Prereq sanity check: `git log --oneline -10` shows the full P2.1 → P2.5 chain in the CRM worktree. All key artifacts present.
+- Spun up 4 specialist subagents in parallel (security-engineer × 1 for admin gate, code-reviewer × 3 for edge function / cross-cutting / frontend). Each produced a file-line-evidenced report with PASS/PARTIAL/FAIL verdicts.
+- Synthesized into [p26_static_audit.md](p26_static_audit.md) (full report) and a [findings.md](findings.md) section near the bottom.
+- Built live-verification bundle at `WorkLogicly-CRM/scripts/p26_verification/` (README + 6 scripts + checklist) for CTO's interactive run.
+
+**Headline results — 13 PASS / 1 FAIL (blocker) / 6 PARTIAL:**
+
+**PASS:**
+- Chain integrity, all phase commits present.
+- Admin gate at all 3 layers (UI, edge fn, RLS) — security review clean. Both `generate-leads` and `promote-candidate` check `profiles.role in ('system_admin','admin')` via service-role client AFTER `getUser()` validates JWT; UI gates via strict identity check (`LeadsView.tsx:93`); RLS policies use the canonical `auth.uid()` → `profiles.role` join with no `to public` / `to anon` / `SECURITY DEFINER` escape hatches.
+- `ENABLE_LEAD_GENERATION` flag (default OFF, 503 short-circuit before auth, present in both fns).
+- Audit row writes on every meaningful exit (success + 5 error paths).
+- Per-click cap (`Math.min(MAX_LIMIT, body.limit ?? DEFAULT_LIMIT)`).
+- `monthly_usage.used` post-increment in response.
+- Two-stage write ordering (candidates → top-N → leads with `ignoreDuplicates:true`).
+- D2 fix held (`item.link` never read; place_id-less items skipped, not hashed).
+- Realtime subscriptions for both `leads` and `lead_candidates`.
+- Promote-from-staging routes through `promote-candidate` (no second SerpAPI call).
+- Error UX: 11 distinct error codes mapped to friendly toasts in `leadGenerationService.ts:162-261`.
+- Chat drawer: state lifted via `AgentChatProvider` (`index.tsx:15-17`), WebSocket survives nav, approval filter correctly discriminates `ui.request_tool_approval` vs `ui.set_status`.
+- Camel↔snake transforms incl. numeric coercion for Postgres `numeric` round-trip.
+- SerpAPI backoff port (exact match: base 0.8 × 2^n, cap 20s, jitter [0.85,1.15), retryable set, 5 attempts).
+- Rate-limit query exploits `(user_id, created_at desc)` index.
+
+**🔴 FAIL — BLOCKER (P2.6 check 13 will fail):**
+- **Cross-city `seen_in_search` overwrite** at `WorkLogicly-CRM/supabase/functions/generate-leads/index.ts:619-625`. PostgREST default upsert UPDATEs all columns on conflict, overwriting the jsonb sidecar. Same business surfaced in two cities (e.g. plumbers in McAllen → then plumbers in Edinburg) loses the first observation. Compounding effect at `:656-657`: pick filter selects by `seen_in_search->>city`, so once a row is relabeled, the original city's pick can no longer find it.
+- **Both edge and cross-cutting reviewers flagged independently.**
+- **Owner:** Cristian (P2.2 commit `4e1e6fe`). Even client-side select-then-merge is racy under concurrent writes — needs server-side jsonb append (RPC or raw SQL) + likely a schema migration to model `seen_in_search` as a jsonb array, not a single object. Header comment at `:17` of the edge fn claims merge semantics; code does not match.
+
+**PARTIAL (none blocking, all documented):**
+1. `LeadQualityScorer.weak_presence` clause at `generate-leads/index.ts:222-227` may diverge from Python source — needs one-shot diff against `src/lead_scraper/scorers/lead_quality.py`. Other weights match the frozen contract exactly (Hugo's Plumbing sample computes to 60.0 as expected).
+2. 503 body lacks machine-readable `code:"feature_disabled"`. Client already maps 503 by status OR substring at `leadGenerationService.ts:179-186`, so cosmetic.
+3. Cache `ilike` won't use the `lower(city), lower(category)` functional index — `ilike "McAllen"` requires `lower(col) = lower($1)` form to use that index. Non-issue at 250/month plan (~3k audit rows/yr); reopen if scale increases.
+4. Dismissed candidates have no UI affordance to view (no "Show dismissed" toggle in the Candidates tab filter row).
+5. Hard-cap message does not mention "resets on the 1st" — disabled CTA tooltip just says "Monthly SerpAPI budget exhausted".
+6. Soft-warning at ≥230 is color-only (red badge); no textual banner.
+
+**Cross-cutting risks (works but fragile):**
+- Hard-cap check at `generate-leads/index.ts:491` runs before cache lookup at `:506`; cache hits past the hard cap are incorrectly blocked. Code/comment disagree.
+- `writeAudit` swallows insert errors (`console.error` only at `:346`). Silent counter drift if audit table becomes unwritable.
+- `findCacheHit` doesn't sanitize `%`/`_` in `ilike` predicate. Low-impact (admin-only).
+- Realtime delivery race vs success toast: server returns 200 + `monthly_usage` before realtime emits new lead rows; user sees "3 leads added" before table updates.
+- `AgentChatPanel` has no internal role guard — safe today (only admin-gated call site), but defensive add-on for P2.7.
+- Five post-user 5xx paths (`:418, 472, 488, 517` + env-misconfig at 383/389) don't write audit rows. Rare; nit.
+
+**Decisions made:**
+- Do NOT flip `enable_lead_generation=true`.
+- Do NOT merge Phase 2 chain to `main`.
+- Recommend opening `P2.5c` hotfix scoped to Cristian: migration (jsonb array for `seen_in_search`) + server-side append RPC + pick filter using `@>` containment + regression test at `scripts/p26_verification/05_dedupe_crosscity.sh`.
+- All PARTIAL items can ship as P2.7 follow-ups; none individually block v1.
+
+**SerpAPI budget impact:** 0 searches consumed — entirely static.
+
+**Escalation triggered:** YES. CTO needs to authorize the P2.5c hotfix path before live verification proceeds (live verification check 13 would fail otherwise). All other 12 checks are reasonable to run today, but the recommendation is to wait until the chain is shippable end-to-end rather than partial-pass it now and re-run check 13 in a week.
+
+**Branch state:** about to commit on the CRM worktree's detached HEAD as `P2.6: static audit + live-verification bundle (BLOCKER: cross-city seen_in_search overwrite)`. Branch contains only `scripts/p26_verification/**` — no production code changes per the verification-phase rule.
+
+**Open questions for CTO:**
+1. Authorize P2.5c hotfix (cross-city dedupe fix)? Recommended yes.
+2. Run the static audit's PARTIAL items as part of P2.5c (one round trip) or defer all 6 to P2.7?
+3. Once P2.5c lands, do you still want to drive live verification yourself, or do you want the static audit re-run + then me to prep a tighter checklist?
