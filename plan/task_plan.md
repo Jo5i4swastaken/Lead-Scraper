@@ -277,12 +277,12 @@ No `chat-with-agent` proxy needed (browser talks WS directly to the local agent)
 **Task-tracking instruction:** When you finish any checkbox below, edit this file: flip `- [ ]` to `- [x]` and append a one-line note (date + worktree/commit + evidence path). When the whole section passes, update the matching row in the "Phase tracking" table at the bottom of this file.
 
 - [ ] **Admin gate, 3 layers:** UI hides button (2.4a), edge function rejects non-admin (2.2), RLS on `lead_candidates` + `lead_generation_audit` restricts writes to admin/system_admin.
-- [ ] **Per-click cap:** server enforces `limit = min(client_limit, 20)`.
-- [ ] **Per-user rate limit:** edge function checks `lead_generation_audit` for caller within last 60s — default **3/min**. Configurable via `Deno.env.GENERATE_LEADS_PER_MIN`.
-- [ ] **Monthly SerpAPI budget:** hard guard at 250/month. Soft warning at 230. Both configurable via `Deno.env`. Block button when exhausted with clear "resets on the 1st" message.
-- [ ] **Search cache (14-day default):** the budget-saving lever. Configurable via `Deno.env.GENERATE_LEADS_CACHE_DAYS`.
-- [ ] **Audit row per request:** city, category, requested_limit, serpapi_called (bool), candidates_inserted, leads_promoted, duplicates, error, user_id, created_at.
-- [ ] **Feature flag:** `enable_lead_generation` boolean in `Deno.env`. Default off until 2.6 verification passes.
+- [x] **Per-click cap:** server enforces `limit = min(client_limit, 20)`. (2026-05-26, Ricardo, P2.5 worktree — `generate-leads/index.ts:447-450`, see [safety-rails-audit.md](safety-rails-audit.md).)
+- [x] **Per-user rate limit:** edge function checks `lead_generation_audit` for caller within last 60s — default **3/min**. Configurable via `Deno.env.GENERATE_LEADS_PER_MIN`. (2026-05-26, Ricardo — live double-click test passed: PER_MIN=1, 2nd click → 429.)
+- [x] **Monthly SerpAPI budget:** hard guard at 250/month. Soft warning at 230. Both configurable via `Deno.env`. Block button when exhausted with clear "resets on the 1st" message. (2026-05-26, Ricardo — hard/soft thresholds verified in `generate-leads/index.ts:491,524`; UI badge disables at 250 in `LeadsView.tsx:542`.)
+- [x] **Search cache (14-day default):** the budget-saving lever. Configurable via `Deno.env.GENERATE_LEADS_CACHE_DAYS`. (2026-05-26, Ricardo — `findCacheHit` at lines 323/502.)
+- [x] **Audit row per request:** city, category, requested_limit, serpapi_called (bool), candidates_inserted, leads_promoted, duplicates, error, user_id, created_at. (2026-05-26, Ricardo — `writeAudit` fires on every exit path: lines 550, 628, 663, 722, 773.)
+- [x] **Feature flag:** `enable_lead_generation` boolean in `Deno.env`. Default off until 2.6 verification passes. (2026-05-26, Ricardo — `ENABLE_LEAD_GENERATION` added to both edge functions; 503 confirmed live with flag unset; client maps to `feature_disabled` code.)
 
 ### 2.6 Verification
 
@@ -457,7 +457,7 @@ In [WorkLogicly-CRM/components/LeadsView.tsx](../../WorkLogicly-CRM/components/L
 | 2.4b UI chat | ✅ complete (2026-05-22) | Mauricio, worktree ded04. CRM commit `1fc92cf` (chat drawer + provider + ported logic). Lead-Scraper: `request_lead_generation` tool replaces run_pipeline; agent.yml + instructions.md + README updated. `tsc --noEmit` + `vite build` pass. Live integration test deferred to P2.6. |
 | ~~2.4c Agent service~~ | unblocked | replaced by local-WebSocket pattern |
 | ~~2.4d Edge functions for chat~~ | unblocked | not needed — browser talks WS direct |
-| 2.5 Safety | unblocked | admin gate (3 layers) + per-click cap + rate-limit + monthly budget + cache + flag |
+| 2.5 Safety | ✅ complete (2026-05-26) | Ricardo, P2.5 worktree. Citations + verification in [safety-rails-audit.md](safety-rails-audit.md). 6 rails verified in-source (P2.1+P2.2+P2.4a); feature-flag added to both edge functions + client error mapping. Live: 503 with flag off, 401 with flag on + bad JWT, 429 on rate-limit double-click. |
 | 2.6 Verification | unblocked | all 11 checks pass in local Supabase |
 | 3.1 Filter vocabulary | not_started | vocabulary locked in `plan/filter-vocabulary.md`; combination semantics AND; unknown-key validation defined |
 | 3.2 Edge function | not_started | `generate-leads` accepts `filters`; matching rows → `leads` direct; non-matching → `lead_candidates`; audit + response envelope extended |

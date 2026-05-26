@@ -615,3 +615,40 @@ Session log for the Lead-Scraper → CRM integration project.
 **Next actions:**
 1. Confirm §3.1 vocabulary with user.
 2. Once approved, open a new worktree against WorkLogicly-CRM for §3.2 (edge function) — keeps Lead-Scraper changes (§3.3) in this repo as a separate chain.
+
+---
+
+## 2026-05-26 — P2.5: Safety rails audited + feature flag added
+
+**Lead:** Ricardo (P2.5 worktree, branch tip atop P2.4b chain `0d23d83`).
+
+**Prereq sanity check:** `git log --oneline -5` shows `P2.4b follow-up` → `P2.4b` → `P2.4a follow-up` → `P2.4a hotfix` → `P2.4a CORS`. Chain intact.
+
+**Done:**
+- **Audit doc** [plan/safety-rails-audit.md](safety-rails-audit.md) — citations (`file:line`) for all 7 rails. Confirmed each is independently enforced. Verification recipe included.
+- **Admin gate (3 layers) verified in place from prior phases:** RLS (P2.1: `20240525000000_lead_generation_schema.sql:83-130, 167-189`), edge functions (P2.2: `generate-leads/index.ts:404-429`; P2.3: `promote-candidate/index.ts:118-145`), UI (P2.4a: `LeadsView.tsx:93, 124, 534-797`).
+- **Per-click cap (20), rate limit (3/min default), monthly budget (250/230), 14-day cache, audit-per-request** all verified at source in `generate-leads/index.ts`. No gaps.
+- **Feature flag (`ENABLE_LEAD_GENERATION`, default off)** added to both `generate-leads` and `promote-candidate` edge functions. Short-circuits to 503 after method validation but before auth or any DB call — cheap to evaluate when off. Promote-candidate gated by the same flag because it's the second mutation surface of the same feature; disabling generation without disabling staging would leave admins able to keep moving rows into `leads`.
+- **Client error mapping**: new `feature_disabled` code in `LeadGenErrorCode` (`lib/leadGenerationService.ts:83`); 503 / `currently disabled` → friendly message at lines 179-186. Stops admins from getting a generic "Something went wrong" when the flag is off in dev.
+
+**Decisions made:**
+- **Flag covers BOTH edge functions, not just generate-leads.** The brief says "edge function" (singular) but the intent is clearly "the lead-generation feature is off." Leaving `promote-candidate` reachable while `generate-leads` is off would let admins keep flipping rows into `leads` via the staging tab — not what "off" means.
+- **Default = OFF until P2.6 verification passes.** Per the brief. Production deploys must explicitly set `ENABLE_LEAD_GENERATION=true` via `supabase secrets set`.
+- **Client `feature_disabled` code is in scope.** 4 lines of mapping that prevent confusing "Something went wrong" toasts during dev. Not gold-plating; reduces post-deploy support load.
+
+**Verification (live on local Supabase):**
+1. **Flag off → 503.** `supabase functions serve generate-leads --no-verify-jwt` (no env file). `curl … /generate-leads` → `503 {"error":"Lead generation is currently disabled"}`. ✅
+2. **Flag on, fake JWT → 401.** With `--env-file` setting `ENABLE_LEAD_GENERATION=true`. `curl` with bogus bearer → `401 {"error":"Invalid or expired token"}`. ✅ Confirms 503 wasn't masking auth.
+3. **Rate-limit double-click → 429.** Created a real admin user via `auth/v1/signup` (`p25-admin@test.local`), promoted to `role='admin'` via PostgREST. `GENERATE_LEADS_PER_MIN=1` in env file. Call 1: 502 (dummy SerpAPI key, expected — `writeAudit` still fires on failure path). Call 2 immediate: `429 {"error":"Rate limit: max 1 requests per minute"}`. ✅
+4. **Cleanup**: test admin + their `lead_generation_audit` rows deleted; temp env file removed; background server killed.
+5. **`tsc --noEmit`** in CRM worktree → clean (0 errors).
+
+**Out of scope:**
+- End-to-end verification scenarios (cache hit, monthly soft/hard thresholds, sales-JWT 403, RLS bypass attempts) — that's P2.6's whole purpose.
+- Production deploy of the env var — flag stays off until P2.6 passes.
+
+**Escalation check:** none triggered. All rails were either pre-existing in P2.1/P2.2/P2.4a (verified in source) or required only the feature flag (in-phase scope). No schema changes needed.
+
+**Branch state:** about to commit as `P2.5: safety-rails audit + feature flag` on the worktree's branch. No merge to main per chain policy.
+
+**Open questions:** none.
