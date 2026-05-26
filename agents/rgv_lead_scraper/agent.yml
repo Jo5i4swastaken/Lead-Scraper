@@ -5,15 +5,19 @@ instructions_file: instructions.md
 context: build_skills_context
 tools:
   - request_lead_generation
+  - list_lead_candidates
+  - promote_lead_candidates
   - get_settings_summary
   - read_file
   - list_directory
 use_safe_agent: true
 safe_agent_options:
-  # Everything in this list auto-approves transparently. request_lead_generation
-  # is intentionally EXCLUDED — it consumes a SerpAPI search (or a cached one)
-  # and writes to the CRM, so each call goes through ui.request_tool_approval.
+  # Everything in this list auto-approves transparently.
+  # request_lead_generation and promote_lead_candidates are intentionally
+  # EXCLUDED — they mutate CRM data (and the former also burns SerpAPI
+  # budget), so each call goes through ui.request_tool_approval.
   safe_tool_names:
     - get_settings_summary
+    - list_lead_candidates
     - read_file
     - list_directory

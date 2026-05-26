@@ -35,5 +35,7 @@ src/lead_scraper/scrapers/base.py
 src/lead_scraper/scrapers/maps_serpapi/__init__.py
 src/lead_scraper/scrapers/maps_serpapi/scraper.py
 tests/test_export.py
+tests/test_failure_modes.py
 tests/test_lead_quality_scorer.py
 tests/test_maps_serpapi.py
+tests/test_output_contract.py
