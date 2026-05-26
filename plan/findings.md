@@ -583,3 +583,78 @@ Other risks (works but fragile):
 - Hard-cap check at `generate-leads/index.ts:491` runs before cache lookup — cache hits past hard cap incorrectly 429 (code/comment disagree).
 - `writeAudit` swallows insert errors — silent counter drift.
 - `findCacheHit` doesn't sanitize `%`/`_` in ilike predicate.
+
+## P2.6 re-audit after P2.5c hotfix (2026-05-26, Tomás, worktree db3a1)
+
+**Trigger:** P2.5c landed at `357f2af` on `main` of the WorkLogicly-CRM chain. P2.6 commit `0405d12` rebased onto P2.5c cleanly → new tip `a59993c`. No conflicts.
+
+**Re-audit scope:** the two items the original static sweep flagged as needing post-fix verification — the cross-city `seen_in_search` blocker and the LeadQualityScorer `weak_presence` clause diff vs the Python source.
+
+### Check 13 (cross-city `seen_in_search` merge) — **PASS**
+
+The fix is structurally correct end-to-end.
+
+**Migration `20240527000000_seen_in_search_array.sql`:**
+- Backfills existing object-shaped `lead_candidates.seen_in_search` rows to single-element arrays. Re-run-safe (only acts on `jsonb_typeof = 'object'`).
+- Drops the old `lead_candidates_search_idx` btree expression index (keyed on `seen_in_search->>'city'/'category'`, which only worked for the single-object shape).
+- Creates a GIN index on the whole `seen_in_search` jsonb, which is the right structure for `@>` containment lookups.
+
+**Migration `20240527000001_upsert_lead_candidate_rpc.sql` — `public.upsert_lead_candidate(p_candidate jsonb, p_observation jsonb)`:**
+- INSERT path: `seen_in_search = jsonb_build_array(p_observation)` — guarantees the array shape from the very first write.
+- ON CONFLICT path: CASE expression checks if existing array `@>` `[{city, category}]`; if yes, keeps the existing array (same-tuple rescrape no-op); else appends with `||`. Other scalar columns update unconditionally from `excluded.*`.
+- Concurrency: Postgres serialises `ON CONFLICT DO UPDATE` under the row lock; T2's CASE expression evaluates against the post-T1 value. Two simultaneous different-city writes both end up appended.
+- GRANTs: `revoke all from public; grant execute to authenticated, service_role` — correct surface; sales/viewer still blocked by underlying `lead_candidates` RLS policies on UPDATE/INSERT.
+
+**Edge function (`generate-leads/index.ts:621-657` + `:666-674`):**
+- Bulk `.upsert(candidates, { onConflict: "external_id" })` replaced with a per-row `adminClient.rpc("upsert_lead_candidate", ...)` loop. With `N ≤ MAX_LIMIT = 20`, per-row round-trip cost is acceptable (SerpAPI call dominates).
+- Audit row written on RPC failure (`:639-654`), with `serpapi_called: !cacheHit` correctly reflecting actual spend.
+- Pick filter switched to `.contains("seen_in_search", [{ city, category }])` (PostgREST `cs` operator → SQL `@>`) at `:672`. Backed by the new GIN index.
+- Header comments at `:14-30` of the file now accurately describe the merge semantics; aspirational comment from P2.2 cleaned up.
+
+**Frontend (`components/LeadsView.tsx:110-134`, `lib/leadGenerationService.ts:120/148/407-416`, `types.ts:114`):**
+- `seenInSearch` typed as `Array<Record<string, unknown>>` end-to-end.
+- New `mostRecentObservation()` helper at `LeadsView.tsx:113-119` handles both array (post-P2.5c) and object (legacy / migration-in-flight) shapes — defensive without bloat.
+- Candidate fetch filters at `leadGenerationService.ts:410-416` use `.contains("seen_in_search", [{...}])` consistently — same GIN-backed path as the edge function.
+- `tsc --noEmit` clean.
+
+### `weak_presence` diff vs Python source — **PASS**
+
+Compared `WorkLogicly-CRM/supabase/functions/generate-leads/index.ts:229-234` against `Lead-Scraper/src/lead_scraper/scorers/lead_quality/scorer.py:107-109`.
+
+Python:
+```python
+weak_presence = (not has_social_presence) and (
+    no_website_listed or low_reviews or (lead.rating is None) or (lead.rating is not None and lead.rating < 4.0)
+)
+```
+
+Deno:
+```typescript
+const weak_presence =
+  !has_social_presence &&
+  (no_website_listed || low_reviews || lead.rating === null || (lead.rating !== null && lead.rating < 4.0));
+```
+
+Boolean structure is identical. The only operational difference: in Deno, `has_social_presence` is hardcoded `false` (`:228`) because there's no enricher in v1. In Python, `has_social_presence` is computed from `social_count >= min_social_links_for_presence`, but in v1 `social_count` is 0 (no enricher), so it's effectively `false` there too. Equivalent.
+
+The sibling `inactive_social` clause matches the same way: Python's `else: inactive_social = has_social_presence and (no_website_listed and low_reviews)` (when `last_post_days` is None) maps directly to Deno's `inactive_social = has_social_presence && no_website_listed && low_reviews`. Both always evaluate to `false` in v1.
+
+### Summary
+
+| Item | Original verdict | Re-audit verdict |
+|---|---|---|
+| Cross-city `seen_in_search` merge (check 13) | 🔴 FAIL — blocker | ✅ PASS |
+| `weak_presence` vs Python | PARTIAL (couldn't statically verify) | ✅ PASS |
+
+**No new issues introduced by P2.5c.** The 5 remaining PARTIAL items from the original audit (503 `code:"feature_disabled"`, cache `ilike` index, dismissed-candidates UI affordance, "resets on the 1st" tooltip, soft-warning textual banner) are untouched as agreed — they ship as P2.7 follow-ups.
+
+### Recommendation
+
+✅ **Static-clean.** The chain is ready for the CTO to execute live verification via `WorkLogicly-CRM/scripts/p26_verification/`. Check 13 (cross-city dedupe) is now expected to PASS — update `checklist.md` row accordingly.
+
+**Chain state at this checkpoint:**
+- CRM worktree tip: `a59993c P2.6: live-verification bundle + static audit recommendation` (rebased onto P2.5c).
+- Lead-Scraper plan tip (after this entry): `main` with P2.6 re-audit entry committed.
+- Phase order: P2.1 → P2.2 → P2.3 → P2.4a (+hotfixes) → P2.4b (+follow-up) → P2.5 → **P2.5c** → P2.6.
+
+Once live verification passes, the full chain merges to `main` and `enable_lead_generation=true` flips in production.

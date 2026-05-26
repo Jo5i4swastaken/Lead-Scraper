@@ -721,3 +721,48 @@ Session log for the Lead-Scraper → CRM integration project.
 1. Authorize P2.5c hotfix (cross-city dedupe fix)? Recommended yes.
 2. Run the static audit's PARTIAL items as part of P2.5c (one round trip) or defer all 6 to P2.7?
 3. Once P2.5c lands, do you still want to drive live verification yourself, or do you want the static audit re-run + then me to prep a tighter checklist?
+
+---
+
+## 2026-05-26 — Phase 2.6 follow-up: P2.5c re-audit (Tomás, worktree db3a1)
+
+**Trigger:** CTO authorized P2.5c (blocker-only scope, 6 PARTIAL items deferred to P2.7) and pinged the new tip `357f2af`. Re-audit task per the hand-off contract.
+
+**Done:**
+- Fetched `357f2af`; verified diff against P2.5 is the expected shape (2 new migrations + edge fn upsert/pick filter rewrite + frontend type/helper updates). No drift outside scope.
+- Rebased P2.6 commit `0405d12` onto `357f2af` → new tip `a59993c`. Clean — no conflicts (P2.6 only adds `scripts/p26_verification/`, which doesn't intersect any P2.5c file).
+- Read both new migrations, the edge-fn rewrite, and the Python `LeadQualityScorer` source at `src/lead_scraper/scorers/lead_quality/scorer.py`. Verified frontend handles the new array shape end-to-end.
+- `tsc --noEmit` from CRM worktree → exit 0.
+
+**Re-audit verdict (full detail in [findings.md](findings.md) "P2.6 re-audit after P2.5c hotfix"):**
+
+| Item | Pre-P2.5c | Post-P2.5c |
+|---|---|---|
+| Cross-city `seen_in_search` merge (check 13) | 🔴 FAIL — blocker | ✅ PASS |
+| `weak_presence` clause vs Python source | PARTIAL | ✅ PASS |
+
+**Key observations on the fix:**
+- RPC concurrency model is correct — Postgres serialises `ON CONFLICT DO UPDATE` under the row lock, so two simultaneous different-city writes both end up appended (T2's CASE evaluates against post-T1 value).
+- Same-tuple rescrape correctly short-circuits via `@>` containment in the CASE expression — no observation duplication.
+- Old btree expression index dropped, GIN index added for `@>` queries — right structure.
+- Per-row RPC loop instead of bulk upsert: bounded by `MAX_LIMIT = 20`, acceptable per-row latency given SerpAPI dominates wall time.
+- Frontend has a defensive `mostRecentObservation()` helper that tolerates both array and legacy object shapes during the brief deploy/migrate window.
+- `weak_presence` boolean structure matches Python verbatim; `has_social_presence` hardcoded `false` in Deno aligns with Python's `social_count >= 1` evaluating to `false` in v1 (no enricher).
+
+**Untouched, ship as P2.7 follow-ups (deferred per CTO):**
+- 503 body machine-readable `code:"feature_disabled"`.
+- Cache `ilike` won't use `lower()` functional index — non-issue at 250/month plan.
+- Dismissed-candidates UI affordance.
+- "Resets on the 1st" tooltip on hard-capped state.
+- Soft-warning textual banner at ≥230.
+- (Plus the "works-but-fragile" risks: hard-cap-before-cache ordering, `writeAudit` swallows errors, `findCacheHit` doesn't sanitize `%`/`_`.)
+
+**Branch state:** about to commit a follow-up on the CRM worktree:
+`P2.6 follow-up: re-audit of P2.5c — blocker cleared, ready for live verification`.
+The commit just updates `checklist.md` (check 13 row note) — no production code, just verification-bundle metadata. P2.6 tip will become the new head; chain shape: P2.5 → P2.5c → P2.6 (the audit/scripts phase).
+
+**SerpAPI budget impact:** 0 (entirely static).
+
+**Hand-back to CTO:** chain is static-clean. Proceed with live verification using `WorkLogicly-CRM/scripts/p26_verification/`. Expected outcome: all 18 sub-rows in `checklist.md` PASS, including check 13 (which was 🔴 EXPECTED FAIL pre-P2.5c).
+
+**Open questions:** none.
