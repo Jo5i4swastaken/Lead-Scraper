@@ -13,13 +13,22 @@ authors = [{name = "Lead-Scraper"}]
 dependencies = [
   "omniagents[all]>=0.6.31",
   "python-dotenv>=1.0.0",
+  "httpx>=0.27",
 ]
 
 [project.scripts]
 lead-scraper = "lead_scraper.cli.main:main"
+worklogicly-agent = "rgv_lead_scraper.cli:main"
+worklogicly-agent-server = "rgv_lead_scraper.server.app:main"
 
+# Two package roots: the original ``src/lead_scraper`` library and the
+# OmniAgents agent directory ``agents/rgv_lead_scraper``. The latter is
+# installed so the ``worklogicly-agent`` console script and the
+# ``rgv_lead_scraper.auth`` package are importable without
+# ``PYTHONPATH`` gymnastics.
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = {"lead_scraper" = "src/lead_scraper", "rgv_lead_scraper" = "agents/rgv_lead_scraper"}
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "agents"]
+include = ["lead_scraper*", "rgv_lead_scraper*"]
