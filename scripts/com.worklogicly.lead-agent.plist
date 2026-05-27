@@ -5,13 +5,24 @@
     <key>Label</key>
     <string>com.worklogicly.lead-agent</string>
 
+    <!-- Wrapper is staged by install-launchd.sh to ~/.worklogicly/ because
+         macOS TCC degrades launchd processes whose executable lives under
+         ~/Desktop. Source of truth: scripts/run-agent.sh in the repo. -->
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/josias/Desktop/CODE/Lead-Scraper/scripts/run-agent.sh</string>
+        <string>/Users/josias/.worklogicly/run-agent.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
     <string>/Users/josias/Desktop/CODE/Lead-Scraper</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/josias</string>
+        <key>USER</key>
+        <string>josias</string>
+    </dict>
 
     <key>RunAtLoad</key>
     <true/>

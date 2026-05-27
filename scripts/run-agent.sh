@@ -8,6 +8,14 @@
 #   2. We want PYTHONPATH=src and the right working directory regardless of
 #      launchd's defaults.
 #   3. Logging shape is easier to control from a script.
+#
+# IMPORTANT: install-launchd.sh COPIES this script to ~/.worklogicly/. The
+# plist's ProgramArguments point at that copy, not at this one. Reason:
+# macOS TCC silently degrades launchd-spawned processes whose executable
+# lives under ~/Desktop, ~/Documents, or ~/Downloads — Python startup
+# crashes with ``OSError: failed to make path absolute`` in getpath. The
+# repo lives in ~/Desktop, so we stage the wrapper outside of it. Edit the
+# in-repo copy and re-run install-launchd.sh to sync.
 
 set -euo pipefail
 
@@ -32,10 +40,22 @@ if [[ -z "${CRM_BASE_URL:-}" || -z "${SUPABASE_ANON_KEY:-}" ]]; then
   exit 78  # EX_CONFIG
 fi
 
-export PYTHONPATH="src"
+# Resolve the upstream Homebrew Python instead of going through the venv's
+# python symlink. Under launchd with KeepAlive=true, Python 3.14's getpath
+# bootstrap crashes ("OSError: failed to make path absolute") when invoked
+# via the venv's python symlink chain. Calling the brew interpreter directly
+# and pointing PYTHONPATH at the venv's site-packages sidesteps that bug.
+# Reading ``home`` from pyvenv.cfg keeps this stable across ``brew upgrade``
+# inside the same Python minor version.
+PY_NAME="$(readlink "$REPO/.venv/bin/python")"                                            # e.g. python3.14
+PY_HOME="$(sed -nE 's/^home[[:space:]]*=[[:space:]]*//p' "$REPO/.venv/pyvenv.cfg")"      # e.g. /opt/homebrew/opt/python@3.14/bin
+PYTHON_BIN="$PY_HOME/$PY_NAME"
+VENV_SITE_PACKAGES="$REPO/.venv/lib/$PY_NAME/site-packages"
+
+export PYTHONPATH="src:$VENV_SITE_PACKAGES"
 export AGENT_MODE="${AGENT_MODE:-local}"
 
-exec "$REPO/.venv/bin/omniagents" run \
+exec "$PYTHON_BIN" -m omniagents run \
   -c agents/rgv_lead_scraper/agent.yml \
   --mode server \
   --port "$PORT" \

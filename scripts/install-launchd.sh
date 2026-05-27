@@ -13,16 +13,20 @@ LABEL="com.worklogicly.lead-agent"
 REPO="/Users/josias/Desktop/CODE/Lead-Scraper"
 SRC_PLIST="$REPO/scripts/$LABEL.plist"
 DST_PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-RUN_SCRIPT="$REPO/scripts/run-agent.sh"
+SRC_RUN_SCRIPT="$REPO/scripts/run-agent.sh"
+# Stage the wrapper outside ~/Desktop. macOS TCC degrades launchd processes
+# whose executable lives under ~/Desktop, and Python 3.14 startup crashes
+# in getpath when launched that way.
+DST_RUN_SCRIPT="$HOME/.worklogicly/run-agent.sh"
 
 if [[ ! -f "$SRC_PLIST" ]]; then
   echo "ERROR: $SRC_PLIST not found" >&2
   exit 1
 fi
 
-if [[ ! -x "$RUN_SCRIPT" ]]; then
-  echo "Making $RUN_SCRIPT executable…"
-  chmod +x "$RUN_SCRIPT"
+if [[ ! -f "$SRC_RUN_SCRIPT" ]]; then
+  echo "ERROR: $SRC_RUN_SCRIPT not found" >&2
+  exit 1
 fi
 
 if [[ ! -f "$HOME/.worklogicly/agent.env" ]]; then
@@ -31,7 +35,11 @@ if [[ ! -f "$HOME/.worklogicly/agent.env" ]]; then
   exit 1
 fi
 
-mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs" "$HOME/.worklogicly"
+
+echo "Staging wrapper to $DST_RUN_SCRIPT"
+cp "$SRC_RUN_SCRIPT" "$DST_RUN_SCRIPT"
+chmod +x "$DST_RUN_SCRIPT"
 
 # If a previous version is loaded, unload it cleanly first.
 if launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; then
