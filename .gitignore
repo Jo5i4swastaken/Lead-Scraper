@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 out/
 .env
+/lead_scraper.egg-info
