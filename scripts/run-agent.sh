@@ -52,7 +52,16 @@ PY_HOME="$(sed -nE 's/^home[[:space:]]*=[[:space:]]*//p' "$REPO/.venv/pyvenv.cfg
 PYTHON_BIN="$PY_HOME/$PY_NAME"
 VENV_SITE_PACKAGES="$REPO/.venv/lib/$PY_NAME/site-packages"
 
-export PYTHONPATH="src:$VENV_SITE_PACKAGES"
+# `agents` is on PYTHONPATH so the `rgv_lead_scraper` package (which lives
+# at agents/rgv_lead_scraper/) resolves as a plain filesystem import. The
+# editable .pth in $VENV_SITE_PACKAGES is NOT processed when site-packages
+# is on PYTHONPATH (.pth files only execute via site.py for real site
+# directories), so we can't rely on the editable install to expose it.
+# Without this, OmniAgents' tool discovery fails to import
+# rgv_lead_scraper.tools.lead_tools and silently drops the four lead-gen
+# tools — leaving only the `read_file` / `list_directory` builtins
+# registered, even though agent.yml still loads.
+export PYTHONPATH="src:agents:$VENV_SITE_PACKAGES"
 export AGENT_MODE="${AGENT_MODE:-local}"
 
 exec "$PYTHON_BIN" -m omniagents run \
