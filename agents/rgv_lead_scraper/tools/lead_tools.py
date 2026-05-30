@@ -196,6 +196,8 @@ async def list_lead_candidates(
     category: str | None = None,
     website_is_null: bool | None = None,
     min_rating: float | None = None,
+    max_rating: float | None = None,
+    min_review_count: int | None = None,
     max_review_count: int | None = None,
     status: str = "candidate",
     limit: int = 50,
@@ -210,7 +212,10 @@ async def list_lead_candidates(
       - city/category match `seen_in_search->>city` and `seen_in_search->>category`.
       - website_is_null=True returns rows where the website column is NULL or empty.
       - website_is_null=False returns rows with a non-empty website.
-      - min_rating / max_review_count are inclusive bounds.
+      - min_rating / max_rating are inclusive bounds on `rating` (gte / lte).
+      - min_review_count / max_review_count are inclusive bounds on `review_count`
+        (gte / lte). Combine them for an ICP band, e.g. min_rating=4.0 +
+        max_review_count=30 = "well-rated but still under-served".
       - status='any' disables the status filter; otherwise defaults to 'candidate'.
 
     Returns: {candidates: [{id, name, phone, website, address, rating,
@@ -253,6 +258,10 @@ async def list_lead_candidates(
         params.append(("seen_in_search->>category", f"eq.{category}"))
     if min_rating is not None:
         params.append(("rating", f"gte.{min_rating}"))
+    if max_rating is not None:
+        params.append(("rating", f"lte.{max_rating}"))
+    if min_review_count is not None:
+        params.append(("review_count", f"gte.{min_review_count}"))
     if max_review_count is not None:
         params.append(("review_count", f"lte.{max_review_count}"))
     if website_is_null is True:
