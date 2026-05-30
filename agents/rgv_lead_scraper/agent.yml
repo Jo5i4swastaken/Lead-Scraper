@@ -2,6 +2,11 @@ name: RGV Lead Scraper
 model: gpt-5.2
 welcome_text: "Lead-scraper agent ready. Which city and category should we search?"
 instructions_file: instructions.md
+# build_skills_context discovers skill bundles under .omni_code/skills/ and injects
+# their name+description index into instructions.md via {{ available_skills_block }}.
+# Skills are higher-level recipes that compose the tools below — they add NO new tools
+# and NO new permissions. See .omni_code/skills/SCHEMA.md for the descriptor schema and
+# instructions.md ("Skills") for selection rules.
 context: build_skills_context
 tools:
   - request_lead_generation
