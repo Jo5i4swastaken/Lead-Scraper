@@ -209,7 +209,9 @@ async def list_lead_candidates(
     scraped, then pass selected IDs to `promote_lead_candidates`.
 
     Filter semantics:
-      - city/category match `seen_in_search->>city` and `seen_in_search->>category`.
+      - city/category match via @> containment on the `seen_in_search` jsonb
+        ARRAY (a row matches if any of its search-provenance entries has that
+        city/category). Matching is exact on the stored value (case-sensitive).
       - website_is_null=True returns rows where the website column is NULL or empty.
       - website_is_null=False returns rows with a non-empty website.
       - min_rating / max_rating are inclusive bounds on `rating` (gte / lte).
@@ -252,10 +254,19 @@ async def list_lead_candidates(
     ]
     if status and status != "any":
         params.append(("status", f"eq.{status}"))
+    # `seen_in_search` is a JSONB ARRAY of {city, category} provenance objects,
+    # not a flat object — so `seen_in_search->>city` / `->>category` evaluate to
+    # NULL and any eq filter matches nothing (the agent "finds no candidates"
+    # even when rows are clearly staged). Mirror the CRM frontend
+    # (leadGenerationService.fetchCandidates) and filter with @> containment via
+    # the PostgREST `cs` operator, backed by lead_candidates_seen_in_search_gin_idx.
+    seen_match: dict[str, str] = {}
     if city:
-        params.append(("seen_in_search->>city", f"eq.{city}"))
+        seen_match["city"] = city
     if category:
-        params.append(("seen_in_search->>category", f"eq.{category}"))
+        seen_match["category"] = category
+    if seen_match:
+        params.append(("seen_in_search", f"cs.{json.dumps([seen_match])}"))
     if min_rating is not None:
         params.append(("rating", f"gte.{min_rating}"))
     if max_rating is not None:
