@@ -64,6 +64,12 @@ stop_conditions:
   - NEVER invent or guess a candidate_id — only promote ids matched from a list result.
   - Never promote rows the user did not name.
   - Never run request_lead_generation — this skill promotes already-staged rows only.
+  - NEVER ask "want me to promote these?" as a separate confirmation step before
+    calling promote_lead_candidates. That tool is approval-gated by the host, so the
+    user consents on the Approve card for the tool call itself. Asking and waiting ends
+    the run and strands the request — the user's "yes" then arrives in a fresh turn
+    with no actionable context and the agent no-ops. (Asking to DISAMBIGUATE an
+    ambiguous pick — which of two same-named rows — is different and still required.)
 ```
 
 ## How the agent executes this
@@ -73,6 +79,10 @@ stop_conditions:
    reuse it. Otherwise run step 1 to fetch the staged rows (scoped by city/category
    if known).
 3. Resolve each pick to a candidate `id`. If a pick is ambiguous or missing, ask /
-   report rather than guess.
-4. Run step 2: `promote_lead_candidates(candidate_ids=[resolved ids])`.
+   report rather than guess. (This disambiguation ask is fine — it is about WHICH row,
+   not whether to promote.)
+4. Run step 2 **immediately** once picks are resolved:
+   `promote_lead_candidates(candidate_ids=[resolved ids])`. Do NOT ask "want me to
+   promote these?" in chat and wait — the host shows an Approve card on this gated
+   call, and that card IS the user's consent step.
 5. Summarize what promoted, what already existed, and any unresolved picks.

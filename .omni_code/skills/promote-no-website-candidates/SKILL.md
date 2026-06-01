@@ -72,6 +72,11 @@ stop_conditions:
   - Never run a new scrape (request_lead_generation) — this skill only promotes
     already-staged rows.
   - Never invent candidate_ids — only ids returned by step 1 may be promoted.
+  - NEVER ask the user to confirm the promotion in chat before calling
+    promote_lead_candidates. That tool is approval-gated by the host, so the user
+    consents on the Approve card for the tool call itself. Asking "want me to promote
+    these?" and waiting ends the run and strands the request — the user's "yes" then
+    arrives in a fresh turn with no actionable context and the agent no-ops.
 ```
 
 ## How the agent executes this
@@ -83,8 +88,10 @@ stop_conditions:
 3. Build the promotion set from step 1's rows. As a second guard, drop any row whose
    `website` is non-empty even if the query returned it. The remaining ids are the
    only ones eligible.
-4. Run step 2: `promote_lead_candidates(candidate_ids=[...])`. This is gated — the
-   user approves it.
+4. Run step 2 **immediately**: `promote_lead_candidates(candidate_ids=[...])`. This is
+   gated — the host shows an Approve card and that card IS the user's consent step. Do
+   NOT ask "want me to promote these?" in chat first and wait; the user already asked,
+   and the gate lets them approve or reject the actual call.
 5. Summarize what promoted vs. failed, and confirm every promoted row had no website.
 
 The contract is absolute: **a candidate with a website is never promoted by this

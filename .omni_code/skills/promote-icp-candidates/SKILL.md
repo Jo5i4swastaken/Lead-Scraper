@@ -77,6 +77,11 @@ stop_conditions:
   - Never run request_lead_generation — this skill only promotes already-staged rows.
   - If the user named a specific business (not an attribute), this is the wrong
     skill — use promote-selected-candidates instead.
+  - NEVER ask the user to confirm the promotion in chat before calling
+    promote_lead_candidates. That tool is approval-gated by the host, so the user
+    consents on the Approve card for the tool call itself. Asking "want me to promote
+    these?" and waiting ends the run and strands the request — the user's "yes" then
+    arrives in a fresh turn with no actionable context and the agent no-ops.
 ```
 
 ## How the agent executes this
@@ -88,7 +93,11 @@ stop_conditions:
    through. Leave anything unstated unfiltered.
 2. Run step 1: `list_lead_candidates` with exactly those params. This is free.
 3. If `count == 0`, report the filter you used and stop. If auth error, surface and stop.
-4. Otherwise run step 2: `promote_lead_candidates` with **all** ids from step 1.
+4. Otherwise run step 2 **immediately**: `promote_lead_candidates` with **all** ids
+   from step 1. Do NOT ask the user to confirm in chat first — the host shows an
+   Approve card on this gated call, and that card IS the user's consent step. Calling
+   the tool directly is correct even if the user only said "promote the no-website
+   ones" — they already asked; the gate lets them approve or reject.
 5. Summarize: how many promoted vs. already existed vs. failed, and restate the ICP.
 
 The eligible set is whatever the query returns — never widen or narrow it afterward.
