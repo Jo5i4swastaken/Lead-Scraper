@@ -51,6 +51,8 @@ Scoring is configured via `config/config.json` under `scoring.lead_quality` (wei
 
 ## Run (OmniAgents)
 
+The agent runs on Claude (`litellm/anthropic/claude-opus-5-5`). Put `ANTHROPIC_API_KEY=...` in the repo-root `.env`.
+
 ```bash
 cd agents/rgv_lead_scraper
 omniagents run -c agent.yml --mode ink
