@@ -41,6 +41,7 @@ also writes):
 |----------------------|----------|--------------------------------------------------------|
 | `CRM_BASE_URL`       | yes      | e.g. `https://<project>.supabase.co`                   |
 | `SUPABASE_ANON_KEY`  | yes      | Project anon (publishable) key — needed for refresh    |
+| `ANTHROPIC_API_KEY`  | yes      | Claude key for the agent's model (LiteLLM). Lives in the repo-root `.env`, which OmniAgents loads from the working directory |
 | `AGENT_MODE`         | no       | `local` (default) or `hosted` (see *Hosted mode* below) |
 | `SUPABASE_URL`       | hosted   | Same value as `CRM_BASE_URL`; read by the hosted server |
 | `WORKSPACE_ROOT`     | no       | Hosted only — default `/tmp/worklogicly-lead-agent`     |
@@ -137,7 +138,7 @@ admin gate all apply normally.
 export AGENT_MODE=hosted
 export SUPABASE_URL="https://<project>.supabase.co"      # required
 export SUPABASE_ANON_KEY="<anon-key>"                    # required
-export OPENAI_API_KEY="sk-…"                             # required by the agent
+export ANTHROPIC_API_KEY="sk-ant-…"                      # required by the agent
 export WORKSPACE_ROOT="/tmp/worklogicly-lead-agent"      # optional, default shown
 export PORT=9494                                         # optional, default shown
 export HOST=0.0.0.0                                      # optional, default shown

@@ -1,5 +1,5 @@
 name: RGV Lead Scraper
-model: gpt-5.2
+model: litellm/anthropic/claude-opus-5-5
 welcome_text: "Lead-scraper agent ready. Which city and category should we search?"
 instructions_file: instructions.md
 # build_skills_context discovers skill bundles under .omni_code/skills/ and injects
@@ -15,6 +15,32 @@ tools:
   - get_settings_summary
   - read_file
   - list_directory
+# Claude via LiteLLM (reads ANTHROPIC_API_KEY from .env).
+# - No temperature: the Anthropic API rejects sampling params on every model.
+# - reasoning.effort is required for the SDK to pass Claude's thinking blocks
+#   back between tool calls; LiteLLM maps it to output_config.effort.
+# - drop_block: build_skills_context re-renders the system prompt every turn from
+#   instructions.md and .omni_code/skills/. That output is stable, but adding or
+#   editing a skill mid-session changes it, so stale thinking blocks are dropped
+#   instead of failing the call.
+# - thinking sits in extra_args, not extra_body (unlike the Copy Agent): the
+#   openai-agents 0.16 that omniagents 0.7 pins hands extra_body to LiteLLM as a
+#   literal "extra_body" field, which the Anthropic API rejects; extra_args are
+#   passed as LiteLLM kwargs. Omni drops extra_args on a session effort override,
+#   so such a session falls back to Claude's default adaptive thinking.
+# - max_tokens covers Claude's thinking plus the reply.
+model_settings:
+  max_tokens: 16000
+  reasoning:
+    effort: high
+  extra_args:
+    thinking:
+      type: adaptive
+      display: summarized
+      block_binding:
+        prefix_mismatch_behavior: drop_block
+  extra_headers:
+    anthropic-beta: thinking-binding-controls-2026-08-01
 use_safe_agent: true
 safe_agent_options:
   # Everything in this list auto-approves transparently.

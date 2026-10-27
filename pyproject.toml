@@ -14,6 +14,9 @@ dependencies = [
   "omniagents[all]>=0.6.31",
   "python-dotenv>=1.0.0",
   "httpx>=0.27",
+  # Claude via LiteLLM. 1.103+ needs mcp>=2; openai-agents (via omniagents) needs mcp<2.
+  "litellm>=1.102.4,<1.103",
+  "mcp>=1.28.1,<2",
 ]
 
 [project.scripts]

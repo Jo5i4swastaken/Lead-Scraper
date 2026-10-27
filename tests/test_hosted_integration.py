@@ -4,7 +4,7 @@ We stub at the boundaries that matter:
   * ``validate_supabase_jwt`` — accept ``good-token``, reject everything else.
   * ``AgentService`` construction — substituted with a tiny RpcMethodsBase
     subclass that exposes a single ``echo`` method. We don't load the real
-    agent spec because that would pull in OpenAI keys, sub-agent skills,
+    agent spec because that would pull in the Anthropic key, sub-agent skills,
     tool discovery, etc., none of which exist in CI.
 
 What this test PROVES:

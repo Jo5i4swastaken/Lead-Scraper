@@ -1,3 +1,12 @@
 --extra-index-url https://pypi.fury.io/ericmichael/
 omniagents[all]>=0.6.31
 python-dotenv>=1.0.0
+
+# Claude (Anthropic API key) -- the agent reaches Claude through LiteLLM.
+# litellm stays on 1.102.x: 1.103+ needs mcp>=2, but omniagents pins
+# openai-agents (0.16.x today), which needs mcp<2.
+litellm>=1.102.4,<1.103
+mcp>=1.28.1,<2
+
+# Tests
+pytest>=8.0
